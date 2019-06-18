@@ -1,0 +1,13 @@
+[package]
+name = "kvs"
+version = "0.1.0"
+authors = ["Luffbee <luffbee@outlook.com>"]
+edition = "2018"
+description = "A key-value server implemented by rust."
+
+[dev-dependencies]
+assert_cmd = "0.11.0"
+predicates = "1.0.0"
+
+[dependencies]
+clap = "2.33.0"
