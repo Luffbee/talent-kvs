@@ -1,13 +1,23 @@
-extern crate clap;
-use clap::{App, Arg, SubCommand};
-//use kvs::KvStore;
+extern crate env_logger;
+extern crate simple_logger;
+
+use clap::{App, AppSettings, Arg, SubCommand};
 use std::process;
 
+use kvs::KvStore;
+
+const DB_DIR: &str = "./";
+
 fn main() {
+    env_logger::init();
+    //simple_logger::init().unwrap();
+
     let app_m = App::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))
         .about(env!("CARGO_PKG_DESCRIPTION"))
+        .setting(AppSettings::SubcommandRequiredElseHelp)
+        .setting(AppSettings::VersionlessSubcommands)
         .subcommand(
             SubCommand::with_name("set")
                 .about("Set the value of a string key to a string")
@@ -43,28 +53,45 @@ fn main() {
             ),
         )
         .get_matches();
+
+    let mut store = match KvStore::open(DB_DIR) {
+        Ok(st) => st,
+        Err(e) => {
+            eprintln!("Error: bad database dir {}: {}.", DB_DIR, e);
+            process::exit(1)
+        }
+    };
+
     match app_m.subcommand() {
-        ("set", Some(_sub_m)) => {
-            //let key = sub_m.value_of("KEY").unwrap();
-            //let val = sub_m.value_of("VALUE").unwrap();
-            //let mut store = KvStore::new();
-            //store.set(key.to_owned(), val.to_owned());
-            eprintln!("unimplemented");
-            process::exit(1);
+        ("set", Some(sub_m)) => {
+            let key = sub_m.value_of("KEY").unwrap();
+            let val = sub_m.value_of("VALUE").unwrap();
+            if let Err(e) = store.set(key.to_owned(), val.to_owned()) {
+                eprintln!("Error: {}.", e);
+                process::exit(1);
+            }
         }
-        ("get", Some(_sub_m)) => {
-            //let key = sub_m.value_of("KEY").unwrap();
-            //let store = KvStore::new();
-            //println!("{}", store.get(key.to_owned()).unwrap());
-            eprintln!("unimplemented");
-            process::exit(1);
+        ("get", Some(sub_m)) => {
+            let key = sub_m.value_of("KEY").unwrap();
+            match store.get(key.to_owned()) {
+                Ok(Some(s)) => {
+                    println!("{}", s);
+                }
+                Ok(None) => {
+                    println!("Key not found");
+                }
+                Err(e) => {
+                    eprintln!("Error: {}.", e);
+                    process::exit(1);
+                }
+            }
         }
-        ("rm", Some(_sub_m)) => {
-            //let key = sub_m.value_of("KEY").unwrap();
-            //let mut store = KvStore::new();
-            //store.remove(key.to_owned());
-            eprintln!("unimplemented");
-            process::exit(1);
+        ("rm", Some(sub_m)) => {
+            let key = sub_m.value_of("KEY").unwrap();
+            if let Err(_e) = store.remove(key.to_owned()) {
+                println!("Key not found");
+                process::exit(1);
+            }
         }
         _ => unreachable!(),
     }
