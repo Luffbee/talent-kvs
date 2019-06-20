@@ -1,17 +1,66 @@
+extern crate failure;
+extern crate log;
+extern crate serde;
+extern crate serde_derive;
 extern crate serde_json;
-use failure::{format_err, Error};
-use log::info;
+
+use failure::Error as FailError;
+use log::{info, warn};
 use serde::Deserialize as SerdeDe;
 use serde_derive::{Deserialize, Serialize};
+
 use std::collections::{HashMap, VecDeque};
+use std::convert::From;
+use std::error::Error as ErrorTrait;
+use std::fmt::{self, Display, Formatter};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 const MAX_FILE_SIZE: u32 = 2 * 1024;
 
+/// KeyNotFound contains the key.
+/// OtherErr contains lower level errors.
+#[derive(Debug)]
+pub enum Error {
+    /// Contains the path with problem.
+    BadPath(PathBuf),
+    /// Found an unexpect command.
+    UnexpectCmd {
+        /// The found command.
+        found: String,
+        /// The expected command.
+        expect: String,
+    },
+    /// Contains the key.
+    KeyNotFound(String),
+    /// Some unknown error.
+    UnknowErr(String),
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter) -> std::result::Result<(), fmt::Error> {
+        match self {
+            Error::BadPath(path) => write!(f, "bad path: {:?}", path),
+            Error::UnexpectCmd { found, expect } => write!(
+                f,
+                "unexpect command: expect {:?}, but found {:?}",
+                expect, found
+            ),
+            Error::KeyNotFound(key) => write!(f, "key not found: {}", key),
+            Error::UnknowErr(s) => write!(f, "unknown error: {}", s),
+        }
+    }
+}
+
+impl ErrorTrait for Error {
+    fn source(&self) -> Option<&(dyn ErrorTrait + 'static)> {
+        None
+    }
+}
+
 /// KvStore Result
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, FailError>;
 
 // (File id, offset)
 #[derive(Debug, Clone)]
@@ -54,6 +103,7 @@ impl KvStore {
         // Init if there is no data file.
         info!("Get fids: {:?}.", fids);
         if fids.back().is_none() {
+            warn!("No data file exists in dir {:?}, creating one.", dir);
             OpenOptions::new()
                 .append(true)
                 .create_new(true)
@@ -86,10 +136,10 @@ impl KvStore {
                 if let Some(id) = stem.to_str() {
                     ids.push(u32::from_str_radix(id, 10)?);
                 } else {
-                    return Err(format_err!("bad file name: '{:?}'", path));
+                    Err(Error::BadPath(path))?;
                 }
             } else {
-                return Err(format_err!("bad file name: '{:?}'", path));
+                Err(Error::BadPath(path))?;
             }
         }
         ids.sort();
@@ -105,6 +155,7 @@ impl KvStore {
             info!("Loading data from file {:?}.", fname);
 
             let reader = BufReader::new(File::open(fname)?);
+            // Only serde_json support stream, that's the reason to choose it.
             let mut stream = serde_json::Deserializer::from_reader(reader).into_iter::<Command>();
             loop {
                 let offset = stream.byte_offset();
@@ -138,7 +189,7 @@ impl KvStore {
         let active_id = self
             .fids
             .back()
-            .ok_or_else(|| format_err!("unknown error: no existing file ids"))?;
+            .ok_or(Error::UnknowErr("no file ids".to_owned()))?;
         let fname = self.dir.join(format!("{}.data", active_id));
         let flen = fs::metadata(&fname)?.len();
 
@@ -181,12 +232,10 @@ impl KvStore {
         // Check the file size first,
         // because seek() may accept a offset beyond the end.
         if flen < u64::from(loc.1) {
-            return Err(format_err!(
+            Err(Error::UnknowErr(format!(
                 "read location {:?} in file {:?} with length {}",
-                loc,
-                fname,
-                flen
-            ));
+                loc, fname, flen
+            )))?;
         }
 
         let mut file = File::open(fname)?;
@@ -222,10 +271,16 @@ impl KvStore {
                 if k == key {
                     Ok(Some(v))
                 } else {
-                    Err(format_err!("get wrong key '{}', expected '{}'", k, key))
+                    Err(From::from(Error::UnexpectCmd {
+                        found: format!("Set({:?}, {:?})", k, v),
+                        expect: format!("Set({:?}, {})", key, "_"),
+                    }))
                 }
             } else {
-                Err(format_err!("get wrong command: {:?}", cmd))
+                Err(From::from(Error::UnexpectCmd {
+                    found: format!("{:?}", cmd),
+                    expect: format!("Set({:?}, {})", key, "_"),
+                }))
             }
         } else {
             Ok(None)
@@ -244,7 +299,7 @@ impl KvStore {
             }
             Ok(())
         } else {
-            Err(format_err!("no such key: {}", key))
+            Err(From::from(Error::KeyNotFound(key)))
         }
     }
 }

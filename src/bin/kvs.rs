@@ -1,16 +1,22 @@
-extern crate env_logger;
-extern crate simple_logger;
+extern crate stderrlog;
+//extern crate log;
 
 use clap::{App, AppSettings, Arg, SubCommand};
 use std::process;
+//use log::{error, warn, info, debug, trace};
 
+use kvs::Error as KvError;
 use kvs::KvStore;
 
 const DB_DIR: &str = "./";
 
 fn main() {
-    env_logger::init();
-    //simple_logger::init().unwrap();
+    stderrlog::new()
+        .module(module_path!())
+        .verbosity(5)
+        .timestamp(stderrlog::Timestamp::Microsecond)
+        .init()
+        .unwrap();
 
     let app_m = App::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
@@ -88,8 +94,12 @@ fn main() {
         }
         ("rm", Some(sub_m)) => {
             let key = sub_m.value_of("KEY").unwrap();
-            if let Err(_e) = store.remove(key.to_owned()) {
-                println!("Key not found");
+            if let Err(e) = store.remove(key.to_owned()) {
+                if let Some(KvError::KeyNotFound(_)) = e.downcast_ref() {
+                    println!("Key not found");
+                } else {
+                    eprintln!("{}", e);
+                }
                 process::exit(1);
             }
         }
