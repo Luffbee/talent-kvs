@@ -18,7 +18,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Seek, SeekFrom, Read, Write};
 use std::path::{Path, PathBuf};
 
-const MAX_FILE_SIZE: u32 = 16 * 1024;
+const MAX_FILE_SIZE: u32 = 4 * 1024;
 
 /// KvStore Result
 pub type Result<T> = std::result::Result<T, FailError>;
@@ -115,6 +115,7 @@ pub struct KvStore {
     dir: PathBuf,
     fsz: u32,
     fids: VecDeque<Fid>,
+    data_num: u32,
 }
 
 impl KvStore {
@@ -134,6 +135,7 @@ impl KvStore {
         }
         Ok(KvStore {
             index: Self::load_index(&dir, &fids)?,
+            data_num: fids.len() as u32,
             fids,
             dir,
             fsz: MAX_FILE_SIZE,
@@ -402,8 +404,9 @@ impl KvStore {
             }
         }
         info!("Fids: {:?}.", self.fids);
-        if self.fids.len() > 3 {
+        if self.fids.len() > self.data_num as usize {
             self.compact()?;
+            self.data_num = self.fids.len() as u32 * 2;
         }
         Ok(())
     }
@@ -444,8 +447,9 @@ impl KvStore {
             if let Command::Rm(key) = cmd {
                 info!("New location of key {}: {:?}.", key, loc);
             }
-            if self.fids.len() > 3 {
+            if self.fids.len() > self.data_num as usize {
                 self.compact()?;
+                self.data_num = self.fids.len() as u32 * 2;
             }
             Ok(())
         } else {
