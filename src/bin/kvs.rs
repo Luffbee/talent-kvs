@@ -1,5 +1,7 @@
-use clap::{App, AppSettings, Arg, SubCommand};
+extern crate structopt;
+
 use std::process;
+use structopt::StructOpt;
 //use log::{error, warn, info, debug, trace};
 
 use kvs::Error as KvError;
@@ -7,49 +9,34 @@ use kvs::KvStore;
 
 const DB_DIR: &str = "./";
 
-fn main() {
-    let app_m = App::new(env!("CARGO_PKG_NAME"))
-        .version(env!("CARGO_PKG_VERSION"))
-        .author(env!("CARGO_PKG_AUTHORS"))
-        .about(env!("CARGO_PKG_DESCRIPTION"))
-        .setting(AppSettings::SubcommandRequiredElseHelp)
-        .setting(AppSettings::VersionlessSubcommands)
-        .subcommand(
-            SubCommand::with_name("set")
-                .about("Set the value of a string key to a string")
-                .arg(
-                    Arg::with_name("KEY")
-                        .help("The key you want to change.")
-                        .required(true)
-                        .index(1),
-                )
-                .arg(
-                    Arg::with_name("VALUE")
-                        .help("The value you want to set to the key.")
-                        .required(true)
-                        .index(2),
-                ),
-        )
-        .subcommand(
-            SubCommand::with_name("get")
-                .about("Get the string value of a given string key")
-                .arg(
-                    Arg::with_name("KEY")
-                        .help("The key you want to query.")
-                        .required(true)
-                        .index(1),
-                ),
-        )
-        .subcommand(
-            SubCommand::with_name("rm").about("Remove a given key").arg(
-                Arg::with_name("KEY")
-                    .help("The key you want to remove.")
-                    .required(true)
-                    .index(1),
-            ),
-        )
-        .get_matches();
+#[derive(Debug, StructOpt)]
+#[structopt(
+    name = "kvs-client",
+    about = "A simple key-value store client.",
+    raw(setting = "structopt::clap::AppSettings::ColoredHelp"),
+    raw(setting = "structopt::clap::AppSettings::VersionlessSubcommands"),
+    raw(setting = "structopt::clap::AppSettings::DisableHelpSubcommand"),
+    )]
+enum Opt {
+    #[structopt(name = "set", about = "Set the value of a string key to a string")]
+    Set {
+        #[structopt(name = "KEY", help = "The key you want to change.")]
+        key: String,
+        #[structopt(name = "VALUE", help = "The value you want to set to the key.")]
+        val: String },
+    #[structopt(name = "get", about = "Get the string value of a given string key")]
+    Get {
+        #[structopt(name = "KEY", help = "The key you want to query.")]
+        key: String
+    },
+    #[structopt(name = "rm", about = "Remove a given key")]
+    Rmv {
+        #[structopt(name = "KEY", help = "The key you want to remove.")]
+        key: String
+    },
+}
 
+fn main() {
     let mut store = match KvStore::open(DB_DIR) {
         Ok(st) => st,
         Err(e) => {
@@ -58,18 +45,15 @@ fn main() {
         }
     };
 
-    match app_m.subcommand() {
-        ("set", Some(sub_m)) => {
-            let key = sub_m.value_of("KEY").unwrap();
-            let val = sub_m.value_of("VALUE").unwrap();
-            if let Err(e) = store.set(key.to_owned(), val.to_owned()) {
+    match Opt::from_args() {
+        Opt::Set{key, val} => {
+            if let Err(e) = store.set(key, val) {
                 eprintln!("Error: {}.", e);
                 process::exit(1);
             }
         }
-        ("get", Some(sub_m)) => {
-            let key = sub_m.value_of("KEY").unwrap();
-            match store.get(key.to_owned()) {
+        Opt::Get{key} => {
+            match store.get(key) {
                 Ok(Some(s)) => {
                     println!("{}", s);
                 }
@@ -82,9 +66,8 @@ fn main() {
                 }
             }
         }
-        ("rm", Some(sub_m)) => {
-            let key = sub_m.value_of("KEY").unwrap();
-            if let Err(e) = store.remove(key.to_owned()) {
+        Opt::Rmv{key} => {
+            if let Err(e) = store.remove(key) {
                 if let Some(KvError::KeyNotFound(_)) = e.downcast_ref() {
                     println!("Key not found");
                 } else {
@@ -93,6 +76,5 @@ fn main() {
                 process::exit(1);
             }
         }
-        _ => unreachable!(),
     }
 }

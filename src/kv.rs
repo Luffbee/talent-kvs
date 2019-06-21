@@ -58,7 +58,7 @@ pub struct KvStore {
 impl KvStore {
     /// Open a database at dir.
     pub fn open<P: AsRef<Path>>(dir: P) -> Result<KvStore> {
-        let dec = slog_term::TermDecorator::new().stderr().build();
+        let dec = slog_term::TermDecorator::new().build();
         let drain = slog_term::CompactFormat::new(dec).build().fuse();
         let drain = slog_async::Async::new(drain).chan_size(16*1024).build().fuse();
         let log = slog::Logger::root(drain, o!());
