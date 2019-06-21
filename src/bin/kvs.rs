@@ -1,6 +1,3 @@
-extern crate stderrlog;
-//extern crate log;
-
 use clap::{App, AppSettings, Arg, SubCommand};
 use std::process;
 //use log::{error, warn, info, debug, trace};
@@ -11,13 +8,6 @@ use kvs::KvStore;
 const DB_DIR: &str = "./";
 
 fn main() {
-    stderrlog::new()
-        .module(module_path!())
-        .verbosity(5)
-        .timestamp(stderrlog::Timestamp::Microsecond)
-        .init()
-        .unwrap();
-
     let app_m = App::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))

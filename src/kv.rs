@@ -1,9 +1,11 @@
-extern crate log;
 extern crate serde;
 extern crate serde_derive;
 extern crate serde_json;
+extern crate slog;
+extern crate slog_term;
+//extern crate slog_async;
 
-use log::{debug, info, warn};
+use slog::{debug, info, warn, o, Drain, Logger};
 use serde::Deserialize as SerdeDe;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::{de::IoRead, StreamDeserializer};
@@ -49,21 +51,28 @@ pub struct KvStore {
     fds: FdList,
     active: (Fid, BufWFile),
     data_num: u32,
+    log: Logger,
 }
 
 
 impl KvStore {
     /// Open a database at dir.
     pub fn open<P: AsRef<Path>>(dir: P) -> Result<KvStore> {
+        let dec = slog_term::TermDecorator::new().stderr().build();
+        let drain = slog_term::CompactFormat::new(dec).build().fuse();
+        let drain = slog_async::Async::new(drain).chan_size(16*1024).build().fuse();
+        let log = slog::Logger::root(drain, o!());
+
         let dir = dir.as_ref().to_owned();
+        info!(log, "Loading fds from dir {:?}.", dir);
         let mut fds = Self::get_file_list(&dir)?;
         // Init if there is no data file.
-        info!("Get fds: {:?}.", fds);
+        debug!(log, "Load fds: {:?}.", fds);
         let active = match fds.back() {
             None => {
-                warn!("No data file exists in dir {:?}, creating one.", dir);
+                warn!(log, "No data file exists in dir {:?}, creating one.", dir);
                 let path = dir.join("1.data");
-                Self::newfile(&path)?;
+                newfile(&path)?;
                 fds.push_back(get_fd(&dir, 1)?);
                 1
             }
@@ -73,13 +82,16 @@ impl KvStore {
             active,
             BufWriter::new(OpenOptions::new().write(true).open(datafile(&dir, active))?),
         );
+        info!(log, "Loading data from dir {:?}.", dir);
+        let index = Self::load_index(&mut fds)?;
         Ok(KvStore {
-            index: Self::load_index(&dir, &mut fds)?,
+            index,
             data_num: fds.len() as u32,
             fds,
             dir,
             active,
             fsz: MAX_FILE_SIZE,
+            log,
         })
     }
 
@@ -90,13 +102,13 @@ impl KvStore {
         let nloc = self.append(&cmd)?;
         if let Command::Set(key, _) = cmd {
             if let Some(loc) = self.index.insert(key.clone(), nloc.clone()) {
-                info!("Old location of key '{}': {:?}.", key, loc);
-                info!("New location of key '{}': {:?}.", key, nloc);
+                debug!(self.log, "Old location of key '{}': {:?}.", key, loc);
+                debug!(self.log, "New location of key '{}': {:?}.", key, nloc);
             } else {
-                info!("Insert new key '{}' at {:?}.", key, nloc);
+                debug!(self.log, "Insert new key '{}' at {:?}.", key, nloc);
             }
         }
-        info!("Fds: {:?}.", self.fds);
+        debug!(self.log, "Fds: {:?}.", self.fds);
         if self.fds.len() > self.data_num as usize {
             self.compact()?;
             self.data_num = self.fds.len() as u32 * 2;
@@ -134,11 +146,11 @@ impl KvStore {
     /// Otherwise, do nothing.
     pub fn remove(&mut self, key: String) -> Result<()> {
         if let Some(loc) = self.index.remove(&key) {
-            info!("Old location of key {}: {:?}.", key, loc);
+            debug!(self.log, "Old location of key {}: {:?}.", key, loc);
             let cmd = Command::Rm(key);
             let loc = self.append(&cmd)?;
             if let Command::Rm(key) = cmd {
-                info!("New location of key {}: {:?}.", key, loc);
+                debug!(self.log, "New location of key {}: {:?}.", key, loc);
             }
             if self.fds.len() > self.data_num as usize {
                 self.compact()?;
@@ -152,7 +164,6 @@ impl KvStore {
 
     /// Return sorted file ids.
     fn get_file_list(dir: &PathBuf) -> Result<FdList> {
-        info!("Loading file ids from dir {:?}.", dir);
         let mut ids: Vec<_> = fs::read_dir(dir)?
             .flat_map(|entry| -> Result<_> { Ok(entry?.path()) })
             .filter(|path| path.is_file())
@@ -174,8 +185,7 @@ impl KvStore {
     }
 
     /// Read the data files to generate a HashMap index.
-    fn load_index(dir: &PathBuf, fds: &mut FdList) -> Result<Index> {
-        info!("Loading data from dir {:?}.", dir);
+    fn load_index(fds: &mut FdList) -> Result<Index> {
         let mut index = Index::new();
 
         for (id, rdr) in fds.iter_mut() {
@@ -209,7 +219,6 @@ impl KvStore {
         // Ensure append, and get current size.
         let mut flen = wtr.seek(SeekFrom::End(0))?;
         let cmd = Command::ser(cmd)?;
-        info!("Appending command: {}", cmd);
         if flen + cmd.len() as u64 > threshold as u64 {
             *wtr = gen_next()?;
             flen = 0;
@@ -231,12 +240,14 @@ impl KvStore {
     fn append(&mut self, cmd: &Command) -> Result<Location> {
         let mut active_id = self.active.0;
         let dir = &self.dir;
+        let log = &self.log;
 
+        debug!(self.log, "Appending command: {:?}", cmd);
         let offset = Self::append_with_threshold(&mut self.active.1, cmd, self.fsz, || {
             active_id += 1;
             let fname = datafile(dir, active_id);
-            info!("Creating new file: {:?}", fname);
-            Ok(Self::newfile(&fname)?)
+            info!(log, "Creating new file: {:?}", fname);
+            Ok(newfile(&fname)?)
         })?;
         if active_id != self.active.0 {
             self.active.0 = active_id;
@@ -269,7 +280,7 @@ impl KvStore {
 
     fn open_temp(&self, id: Fid) -> Result<BufWriter<File>> {
         let path = self.tempfile(id);
-        info!("Creating new file: {:?}", path);
+        info!(self.log, "Creating new file: {:?}", path);
         Ok(BufWriter::new(
             OpenOptions::new()
                 .write(true)
@@ -357,10 +368,11 @@ impl KvStore {
                 }
             }
         }
-        debug!("Fids after real_compact: {:?}.", self.fds);
+        debug!(self.log, "Fids after real_compact: {:?}.", self.fds);
         loop {
             if let Some((id, _)) = self.fds.front() {
                 if *id < active_id {
+                    info!(self.log, "Delete file: {:?}", self.datafile(*id));
                     fs::remove_file(self.datafile(*id))?;
                     self.fds.pop_front().unwrap();
                 } else if *id == active_id {
@@ -373,14 +385,13 @@ impl KvStore {
             }
         }
         for i in lowest_id..active_id {
+            info!(self.log, "Move file: {:?} -> {:?}.",
+                  self.tempfile(i),
+                  self.datafile(i));
             fs::rename(self.tempfile(i), self.datafile(i))?;
             self.fds.push_front(get_fd(&self.dir, i)?);
         }
         Ok(())
-    }
-
-    fn newfile<P: AsRef<Path>>(path: P) -> Result<BufWriter<File>> {
-        Ok(BufWriter::new(OpenOptions::new().write(true).create_new(true).open(path)?))
     }
 
     fn tempfile(&self, id: Fid) -> PathBuf {
@@ -413,6 +424,11 @@ impl Command {
         serde_json::Deserializer::from_reader(rdr).into_iter::<Self>()
     }
 }
+
+fn newfile<P: AsRef<Path>>(path: P) -> Result<BufWriter<File>> {
+    Ok(BufWriter::new(OpenOptions::new().write(true).create_new(true).open(path)?))
+}
+
 
 fn datafile(dir: &PathBuf, id: Fid) -> PathBuf {
     dir.join(format!("{}.data", id))
