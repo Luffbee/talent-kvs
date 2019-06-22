@@ -1,14 +1,13 @@
 extern crate serde;
 extern crate serde_derive;
 extern crate serde_json;
-extern crate slog;
-extern crate slog_term;
-//extern crate slog_async;
+pub extern crate slog;
+extern crate slog_stdlog;
 
-use slog::{debug, info, warn, o, Drain, Logger};
 use serde::Deserialize as SerdeDe;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::{de::IoRead, StreamDeserializer};
+use slog::{debug, info, o, warn, Drain, Logger};
 
 use std::collections::{HashMap, VecDeque};
 use std::convert::From;
@@ -17,13 +16,13 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use crate::{Error, Result};
+use crate::{KvsError as Error, Result};
 
-const MAX_FILE_SIZE: u32 = 2 * 1024;
+const MAX_ACTIVE_SIZE: u64 = 16 * 1024;
 
-type Fid = u32;
+type Fid = usize;
 // (File id, offset)
-type Location = (Fid, u32);
+type Location = (Fid, u64);
 type Index = HashMap<String, Location>;
 type BufRFile = BufReader<File>;
 type BufWFile = BufWriter<File>;
@@ -44,28 +43,49 @@ type FdList = VecDeque<Fd>;
 /// assert_eq!(val, Some("value".to_owned()));
 /// ```
 pub struct KvStore {
-    index: Index,
     dir: PathBuf,
-    /// Use u32 to limit the file size.
-    fsz: u32,
+    log: Logger,
+    fsz: u64,
+
+    data_num: usize,
+    index: Index,
     fds: FdList,
     active: (Fid, BufWFile),
-    data_num: u32,
-    log: Logger,
 }
 
+/// Use to costom KvStore.
+pub struct KvStoreBuilder {
+    dir: PathBuf,
+    log: Option<Logger>,
+    fsz: u64,
+}
 
-impl KvStore {
-    /// Open a database at dir.
-    pub fn open<P: AsRef<Path>>(dir: P) -> Result<KvStore> {
-        let dec = slog_term::TermDecorator::new().build();
-        let drain = slog_term::CompactFormat::new(dec).build().fuse();
-        let drain = slog_async::Async::new(drain).chan_size(16*1024).build().fuse();
-        let log = slog::Logger::root(drain, o!());
+impl KvStoreBuilder {
+    /// Set logger.
+    pub fn logger(mut self, log: Logger) -> Self {
+        self.log = Some(log);
+        self
+    }
 
-        let dir = dir.as_ref().to_owned();
+    /// Set the max size of active file.
+    pub fn active_size(mut self, sz: u64) -> Self {
+        self.fsz = sz;
+        self
+    }
+
+    /// Build the KvStore.
+    pub fn build(self) -> Result<KvStore> {
+        let dir = self.dir;
+        let log = match self.log {
+            Some(logger) => logger,
+            None => {
+                Logger::root(slog_stdlog::StdLog.fuse(), o!())
+            }
+        };
+
         info!(log, "Loading fds from dir {:?}.", dir);
         let mut fds = Self::get_file_list(&dir)?;
+
         // Init if there is no data file.
         debug!(log, "Load fds: {:?}.", fds);
         let active = match fds.back() {
@@ -80,19 +100,86 @@ impl KvStore {
         };
         let active = (
             active,
-            BufWriter::new(OpenOptions::new().write(true).open(datafile(&dir, active))?),
+            BufWriter::new(
+                OpenOptions::new()
+                    .write(true)
+                    .open(datafile(&dir, active))?,
+            ),
         );
+
         info!(log, "Loading data from dir {:?}.", dir);
         let index = Self::load_index(&mut fds)?;
+
         Ok(KvStore {
             index,
-            data_num: fds.len() as u32,
+            data_num: fds.len(),
             fds,
             dir,
             active,
-            fsz: MAX_FILE_SIZE,
+            fsz: self.fsz,
             log,
         })
+    }
+
+    /// Return sorted file ids.
+    fn get_file_list(dir: &PathBuf) -> Result<FdList> {
+        let mut ids: Vec<_> = fs::read_dir(dir)?
+            .flat_map(|entry| -> Result<_> { Ok(entry?.path()) })
+            .filter(|path| path.is_file())
+            .filter(|path| path.extension() == Some("data".as_ref()))
+            .flat_map(|path| {
+                path.file_stem()
+                    .and_then(OsStr::to_str)
+                    .map(str::parse::<Fid>)
+            })
+            .flatten()
+            .collect();
+        ids.sort_unstable();
+        let mut fds = VecDeque::with_capacity(ids.len());
+        for id in ids {
+            let path = dir.join(format!("{}.data", id));
+            fds.push_back((id, BufReader::new(File::open(path)?)));
+        }
+        Ok(fds)
+    }
+
+    /// Read the data files to generate a HashMap index.
+    fn load_index(fds: &mut FdList) -> Result<Index> {
+        let mut index = Index::new();
+
+        for (id, rdr) in fds.iter_mut() {
+            let mut stream = Command::iter_from_reader(rdr);
+            let mut offset = stream.byte_offset();
+            while let Some(cmd) = stream.next() {
+                match cmd? {
+                    Command::Set(key, _) => {
+                        index.insert(key, (*id, offset as u64));
+                    }
+                    Command::Rm(key) => {
+                        index.remove(&key);
+                    }
+                }
+                offset = stream.byte_offset();
+            }
+        }
+        Ok(index)
+    }
+}
+
+impl KvStore {
+    /// Open a database with default configuration.
+    pub fn open(dir: impl AsRef<Path>) -> Result<KvStore> {
+        Self::new(dir).build()
+    }
+
+    /// Return a builder.
+    pub fn new(dir: impl AsRef<Path>) -> KvStoreBuilder {
+        let dir = dir.as_ref().to_owned();
+        KvStoreBuilder {
+            dir,
+            fsz: MAX_ACTIVE_SIZE,
+            log: None,
+        }
     }
 
     /// If the key already in the store, update the value.  
@@ -111,7 +198,7 @@ impl KvStore {
         debug!(self.log, "Fds: {:?}.", self.fds);
         if self.fds.len() > self.data_num as usize {
             self.compact()?;
-            self.data_num = self.fds.len() as u32 * 2;
+            self.data_num = self.fds.len() * 2;
         }
         Ok(())
     }
@@ -154,7 +241,7 @@ impl KvStore {
             }
             if self.fds.len() > self.data_num as usize {
                 self.compact()?;
-                self.data_num = self.fds.len() as u32 * 2;
+                self.data_num = self.fds.len() * 2;
             }
             Ok(())
         } else {
@@ -162,56 +249,12 @@ impl KvStore {
         }
     }
 
-    /// Return sorted file ids.
-    fn get_file_list(dir: &PathBuf) -> Result<FdList> {
-        let mut ids: Vec<_> = fs::read_dir(dir)?
-            .flat_map(|entry| -> Result<_> { Ok(entry?.path()) })
-            .filter(|path| path.is_file())
-            .filter(|path| path.extension() == Some("data".as_ref()))
-            .flat_map(|path| {
-                path.file_stem()
-                    .and_then(OsStr::to_str)
-                    .map(str::parse::<Fid>)
-            })
-            .flatten()
-            .collect();
-        ids.sort_unstable();
-        let mut fds = VecDeque::with_capacity(ids.len());
-        for id in ids {
-            let path = dir.join(format!("{}.data", id));
-            fds.push_back((id, BufReader::new(File::open(path)?)));
-        }
-        Ok(fds)
-    }
-
-    /// Read the data files to generate a HashMap index.
-    fn load_index(fds: &mut FdList) -> Result<Index> {
-        let mut index = Index::new();
-
-        for (id, rdr) in fds.iter_mut() {
-            let mut stream = Command::iter_from_reader(rdr);
-            let mut offset = stream.byte_offset();
-            while let Some(cmd) = stream.next() {
-                match cmd? {
-                    Command::Set(key, _) => {
-                        index.insert(key, (*id, offset as u32));
-                    }
-                    Command::Rm(key) => {
-                        index.remove(&key);
-                    }
-                }
-                offset = stream.byte_offset();
-            }
-        }
-        Ok(index)
-    }
-
     fn append_with_threshold<W, F>(
         wtr: &mut W,
         cmd: &Command,
-        threshold: u32,
+        threshold: u64,
         mut gen_next: F,
-    ) -> Result<u32>
+    ) -> Result<u64>
     where
         W: Write + Seek,
         F: FnMut() -> Result<W>,
@@ -232,7 +275,7 @@ impl KvStore {
                 cmd
             );
         }
-        Ok(flen as u32)
+        Ok(flen)
     }
 
     // Write command to the active data file.
@@ -385,9 +428,12 @@ impl KvStore {
             }
         }
         for i in lowest_id..active_id {
-            info!(self.log, "Move file: {:?} -> {:?}.",
-                  self.tempfile(i),
-                  self.datafile(i));
+            info!(
+                self.log,
+                "Move file: {:?} -> {:?}.",
+                self.tempfile(i),
+                self.datafile(i)
+            );
             fs::rename(self.tempfile(i), self.datafile(i))?;
             self.fds.push_front(get_fd(&self.dir, i)?);
         }
@@ -425,10 +471,11 @@ impl Command {
     }
 }
 
-fn newfile<P: AsRef<Path>>(path: P) -> Result<BufWriter<File>> {
-    Ok(BufWriter::new(OpenOptions::new().write(true).create_new(true).open(path)?))
+fn newfile(path: impl AsRef<Path>) -> Result<BufWriter<File>> {
+    Ok(BufWriter::new(
+        OpenOptions::new().write(true).create_new(true).open(path)?,
+    ))
 }
-
 
 fn datafile(dir: &PathBuf, id: Fid) -> PathBuf {
     dir.join(format!("{}.data", id))
@@ -437,4 +484,3 @@ fn datafile(dir: &PathBuf, id: Fid) -> PathBuf {
 fn get_fd(dir: &PathBuf, id: Fid) -> Result<Fd> {
     Ok((id, BufReader::new(File::open(datafile(dir, id))?)))
 }
-
