@@ -1,42 +1,60 @@
 extern crate structopt;
 
-use std::process;
 use structopt::StructOpt;
-//use log::{error, warn, info, debug, trace};
+
+use std::net::SocketAddr;
+use std::process;
 
 use kvs::Error as KvError;
 use kvs::KvStore;
 
 const DB_DIR: &str = "./";
 
-#[derive(Debug, StructOpt)]
+#[derive(StructOpt)]
 #[structopt(
     name = "kvs-client",
     about = "A simple key-value store client.",
     raw(setting = "structopt::clap::AppSettings::ColoredHelp"),
     raw(setting = "structopt::clap::AppSettings::VersionlessSubcommands"),
-    raw(setting = "structopt::clap::AppSettings::DisableHelpSubcommand"),
-    )]
-enum Opt {
+    raw(setting = "structopt::clap::AppSettings::DisableHelpSubcommand")
+)]
+struct Opt {
+        #[structopt(
+            name = "IP:PORT",
+            long = "addr",
+            help = "Server address.",
+            default_value = "127.0.0.1:4000",
+            global = true,
+        )]
+        addr: SocketAddr,
+        #[structopt(subcommand)]
+        op: Operation,
+}
+
+#[derive(StructOpt)]
+enum Operation {
     #[structopt(name = "set", about = "Set the value of a string key to a string")]
     Set {
         #[structopt(name = "KEY", help = "The key you want to change.")]
         key: String,
         #[structopt(name = "VALUE", help = "The value you want to set to the key.")]
-        val: String },
+        val: String,
+    },
     #[structopt(name = "get", about = "Get the string value of a given string key")]
     Get {
         #[structopt(name = "KEY", help = "The key you want to query.")]
-        key: String
+        key: String,
     },
     #[structopt(name = "rm", about = "Remove a given key")]
     Rmv {
         #[structopt(name = "KEY", help = "The key you want to remove.")]
-        key: String
+        key: String,
     },
 }
 
 fn main() {
+    let opt = Opt::from_args();
+
     let mut store = match KvStore::open(DB_DIR) {
         Ok(st) => st,
         Err(e) => {
@@ -45,14 +63,17 @@ fn main() {
         }
     };
 
-    match Opt::from_args() {
-        Opt::Set{key, val} => {
+    let addr = opt.addr;
+    match opt.op {
+        Operation::Set { key, val } => {
+            eprintln!("{:?}", addr);
             if let Err(e) = store.set(key, val) {
                 eprintln!("Error: {}.", e);
                 process::exit(1);
             }
         }
-        Opt::Get{key} => {
+        Operation::Get { key } => {
+            eprintln!("{:?}", addr);
             match store.get(key) {
                 Ok(Some(s)) => {
                     println!("{}", s);
@@ -66,7 +87,8 @@ fn main() {
                 }
             }
         }
-        Opt::Rmv{key} => {
+        Operation::Rmv { key } => {
+            eprintln!("{:?}", addr);
             if let Err(e) = store.remove(key) {
                 if let Some(KvError::KeyNotFound(_)) = e.downcast_ref() {
                     println!("Key not found");
