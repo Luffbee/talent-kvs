@@ -1,14 +1,13 @@
 extern crate structopt;
+extern crate slog;
+extern crate slog_async;
+extern crate slog_term;
 
 use structopt::StructOpt;
+use slog::{o, crit, Drain, Logger};
 
-use std::net::SocketAddr;
-use std::process;
-
-use kvs::Error as KvError;
-use kvs::KvStore;
-
-const DB_DIR: &str = "./";
+use std::net::{SocketAddr, TcpStream};
+use std::io::Write;
 
 #[derive(StructOpt)]
 #[structopt(
@@ -19,16 +18,16 @@ const DB_DIR: &str = "./";
     raw(setting = "structopt::clap::AppSettings::DisableHelpSubcommand")
 )]
 struct Opt {
-        #[structopt(
-            name = "IP:PORT",
-            long = "addr",
-            help = "Server address.",
-            default_value = "127.0.0.1:4000",
-            global = true,
-        )]
-        addr: SocketAddr,
-        #[structopt(subcommand)]
-        op: Operation,
+    #[structopt(
+        name = "IP:PORT",
+        long = "addr",
+        help = "Server address.",
+        default_value = "127.0.0.1:4000",
+        global = true
+    )]
+    addr: SocketAddr,
+    #[structopt(subcommand)]
+    op: Operation,
 }
 
 #[derive(StructOpt)]
@@ -52,51 +51,41 @@ enum Operation {
     },
 }
 
-fn main() {
+fn main() -> Result<(), i32> {
     let opt = Opt::from_args();
 
-    let mut store = match KvStore::open(DB_DIR) {
-        Ok(st) => st,
+    let decorator = slog_term::TermDecorator::new().build();
+    let drain = slog_term::FullFormat::new(decorator).build().fuse();
+    let drain = slog_async::Async::new(drain).build().fuse();
+    let log = Logger::root(drain, o!());
+
+    let mut stream = match TcpStream::connect(opt.addr) {
+        Ok(s) => s,
         Err(e) => {
-            eprintln!("Error: bad database dir {}: {}.", DB_DIR, e);
-            process::exit(1)
+            crit!(log, "Failed to connect to {}: {}.", opt.addr, e);
+            return Err(1);
         }
     };
 
-    let addr = opt.addr;
     match opt.op {
         Operation::Set { key, val } => {
-            eprintln!("{:?}", addr);
-            if let Err(e) = store.set(key, val) {
-                eprintln!("Error: {}.", e);
-                process::exit(1);
+            if let Err(e) = stream.write(format!("SET {:?} {:?}\r\n", key, val).as_bytes()) {
+                crit!(log, "Failed to send command: {}.", e);
+                return Err(1);
             }
         }
         Operation::Get { key } => {
-            eprintln!("{:?}", addr);
-            match store.get(key) {
-                Ok(Some(s)) => {
-                    println!("{}", s);
-                }
-                Ok(None) => {
-                    println!("Key not found");
-                }
-                Err(e) => {
-                    eprintln!("Error: {}.", e);
-                    process::exit(1);
-                }
+            if let Err(e) = stream.write(format!("GET {:?}\r\n", key).as_bytes()) {
+                crit!(log, "Failed to send command: {}.", e);
+                return Err(1);
             }
         }
         Operation::Rmv { key } => {
-            eprintln!("{:?}", addr);
-            if let Err(e) = store.remove(key) {
-                if let Some(KvError::KeyNotFound(_)) = e.downcast_ref() {
-                    println!("Key not found");
-                } else {
-                    eprintln!("{}", e);
-                }
-                process::exit(1);
+            if let Err(e) = stream.write(format!("RM {:?}\r\n", key).as_bytes()) {
+                crit!(log, "Failed to send command: {}.", e);
+                return Err(1);
             }
         }
     }
+    Ok(())
 }
