@@ -1,4 +1,4 @@
-use std::error::Error as ErrorTrait;
+use std::error::Error as StdError;
 use std::fmt::{self, Display, Formatter};
 use std::path::PathBuf;
 
@@ -39,8 +39,8 @@ impl Display for Error {
     }
 }
 
-impl ErrorTrait for Error {
-    fn source(&self) -> Option<&(dyn ErrorTrait + 'static)> {
+impl StdError for Error {
+    fn source(&self) -> Option<&'static dyn StdError> {
         None
     }
 }

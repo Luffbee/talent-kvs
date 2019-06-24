@@ -3,11 +3,13 @@ extern crate serde_derive;
 extern crate serde_json;
 pub extern crate slog;
 extern crate slog_stdlog;
+extern crate failure;
 
 use serde::Deserialize as SerdeDe;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::{de::IoRead, StreamDeserializer};
 use slog::{debug, info, o, warn, Drain, Logger};
+use failure::format_err;
 
 use std::collections::{HashMap, VecDeque};
 use std::convert::From;
@@ -76,6 +78,17 @@ impl KvStoreBuilder {
     /// Build the KvStore.
     pub fn build(self) -> Result<KvStore> {
         let dir = self.dir;
+        let metapath = dir.join("meta");
+        if metapath.is_dir() {
+            return Err(format_err!("{:?} is dir", metapath));
+        } else if metapath.is_file() {
+            let meta = String::from_utf8_lossy(&fs::read(&metapath)?).into_owned();
+            if meta != "kvs" {
+                return Err(format_err!("invalid metadata {:?}: {}", metapath, meta));
+            }
+        } else {
+            fs::write(metapath, "kvs")?;
+        }
         let log = match self.log {
             Some(logger) => logger,
             None => {

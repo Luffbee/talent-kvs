@@ -1,8 +1,16 @@
-use crate::Result;
+extern crate failure;
+
+use std::path::Path;
+
 use crate::KvStore;
+use crate::Result;
 
 /// KV server storage backend.
 pub trait KvsEngine {
+    /// Check meta then open database.
+    fn open(path: impl AsRef<Path>) -> Result<Self>
+    where
+        Self: Sized;
     /// Set key-value.
     fn set(&mut self, key: String, value: String) -> Result<()>;
     /// Get key.
@@ -12,6 +20,9 @@ pub trait KvsEngine {
 }
 
 impl KvsEngine for KvStore {
+    fn open(path: impl AsRef<Path>) -> Result<Self> {
+        Self::open(path)
+    }
     fn set(&mut self, key: String, value: String) -> Result<()> {
         self.set(key, value)
     }
