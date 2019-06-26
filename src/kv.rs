@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{KvsError as Error, Result};
 
-const MAX_ACTIVE_SIZE: u64 = 16 * 1024;
+const MAX_ACTIVE_SIZE: u64 = 1024 * 1024;
 
 type Fid = usize;
 // (File id, offset)
@@ -315,23 +315,16 @@ impl KvStore {
         Ok((active_id, offset))
     }
 
-    fn read(&self, loc: &Location) -> Result<Command> {
-        let fname = self.datafile(loc.0);
-        let flen = fs::metadata(&fname)?.len();
-
-        // Check the file size first,
-        // because seek() may accept a offset beyond the end.
-        if flen < u64::from(loc.1) {
-            Err(Error::UnknowErr(format!(
-                "read location {:?} in file {:?} with length {}",
-                loc, fname, flen
-            )))?;
-        }
-
-        let mut file = BufReader::new(File::open(fname)?);
+    fn read(&mut self, loc: &Location) -> Result<Command> {
+        let idx = self.fds.len() as isize + loc.0 as isize - self.active.0 as isize - 1;
+        assert!(idx >= 0);
+        let idx = idx as usize;
+        let fd = self.fds.get_mut(idx).expect("fids should be a range");
+        assert_eq!(fd.0, loc.0, "get wrong fd");
+        let file = &mut fd.1;
         file.seek(SeekFrom::Start(u64::from(loc.1)))?;
 
-        Command::one_from_reader(&mut file)
+        Command::one_from_reader(file)
     }
 
     fn open_temp(&self, id: Fid) -> Result<BufWriter<File>> {
