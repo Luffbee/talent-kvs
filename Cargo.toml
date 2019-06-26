@@ -12,6 +12,11 @@ predicates = "1.0.0"
 rand = "0.6.5"
 tempfile = "3.0.7"
 walkdir = "2.2.7"
+slog = { version = "2.4.1", features = ["max_level_warn"] }
+
+[[bench]]
+name = "benches"
+harness = false
 
 [dependencies]
 failure = "0.1.5"
