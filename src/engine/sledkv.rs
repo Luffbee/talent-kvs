@@ -10,8 +10,11 @@ use std::fs::{self};
 
 use crate::{KvsEngine, Result, KvsError};
 
-impl KvsEngine for Db {
-    fn open(path: impl AsRef<Path>) -> Result<Self> {
+#[derive(Clone)]
+pub struct SledDb(Db);
+
+impl SledDb {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let metapath = path.as_ref().join("meta");
         if metapath.is_dir() {
             return Err(format_err!("{:?} is dir", metapath));
@@ -23,26 +26,29 @@ impl KvsEngine for Db {
         } else {
             fs::write(metapath, "sled")?;
         }
-        Ok(Self::start_default(path)?)
+        Ok(Self(Db::start_default(path)?))
     }
+}
 
+
+impl KvsEngine for SledDb {
     /// Set key-value.
-    fn set(&mut self, key: String, value: String) -> Result<()> {
-        Tree::set(self, key.as_bytes(), value.as_bytes())?;
-        self.flush()?;
+    fn set(&self, key: String, value: String) -> Result<()> {
+        Tree::set(&self.0, key.as_bytes(), value.as_bytes())?;
+        self.0.flush()?;
         Ok(())
     }
     /// Get key.
-    fn get(&mut self, key: String) -> Result<Option<String>> {
-        Ok(Tree::get(self, key.as_bytes())?.map(|v| String::from_utf8_lossy(&v).to_string()))
+    fn get(&self, key: String) -> Result<Option<String>> {
+        Ok(Tree::get(&self.0, key.as_bytes())?.map(|v| String::from_utf8_lossy(&v).to_string()))
     }
 
     /// Remove key.
-    fn remove(&mut self, key: String) -> Result<()> {
-        if None == self.del(key.clone())? {
+    fn remove(&self, key: String) -> Result<()> {
+        if None == self.0.del(key.clone())? {
             Err(KvsError::KeyNotFound(key))?;
         }
-        self.flush()?;
+        self.0.flush()?;
         Ok(())
     }
 }

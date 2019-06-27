@@ -4,12 +4,11 @@ extern crate slog_async;
 extern crate slog_term;
 
 use structopt::StructOpt;
-use slog::{o, crit, error, Drain, Logger};
+use slog::{o, Drain, Logger};
 
-use std::net::{SocketAddr, TcpStream};
-use std::io::{prelude::*, BufReader};
+use std::net::{SocketAddr};
 
-use kvs::protocol::Proto;
+use kvs::KvsClient;
 
 #[derive(StructOpt)]
 #[structopt(
@@ -60,94 +59,18 @@ fn main() -> Result<(), i32> {
     let drain = slog_term::FullFormat::new(decorator).build().fuse();
     let drain = slog_async::Async::new(drain).build().fuse();
     let log = Logger::root(drain, o!());
-
-    let mut stream = match TcpStream::connect(opt.addr) {
-        Ok(s) => s,
-        Err(e) => {
-            crit!(log, "Failed to connect to {}: {}.", opt.addr, e);
-            return Err(1);
-        }
-    };
+    
+    let mut client = KvsClient::new(opt.addr, log)?;
 
     match opt.op {
         Operation::Set { key, val } => {
-            let req = Proto::Seq(vec![
-                Proto::Str("SET".to_owned()),
-                Proto::Bulk(Vec::from(key)), 
-                Proto::Bulk(Vec::from(val)),
-            ]);
-            if let Err(e) = stream.write(&req.ser()) {
-                crit!(log, "Failed to send command: {}.", e);
-                return Err(1);
-            }
-            let mut rdr = BufReader::new(stream);
-            let resp = Proto::from_bufread(&mut rdr).unwrap();
-            match resp {
-                Proto::Str(_) => {},
-                Proto::Err(e) => {
-                    error!(log, "server error: {}", e);
-                    return Err(1);
-                }
-                item => {
-                    error!(log, "unexpected item: {:?}", item);
-                    return Err(1);
-                }
-            }
+            client.set(key, val)?;
         }
         Operation::Get { key } => {
-            let req = Proto::Seq(vec![
-                Proto::Str("GET".to_owned()),
-                Proto::Bulk(Vec::from(key)),
-            ]);
-            if let Err(e) = stream.write(&req.ser()) {
-                crit!(log, "Failed to send command: {}.", e);
-                return Err(1);
-            }
-            let mut rdr = BufReader::new(stream);
-            let resp = Proto::from_bufread(&mut rdr).unwrap();
-            match resp {
-                Proto::Bulk(v) => {
-                    println!("{}", String::from_utf8_lossy(&v));
-                }
-                Proto::Null => {
-                    println!("Key not found");
-                },
-                Proto::Err(e) => {
-                    error!(log, "server error: {}", e);
-                    return Err(1);
-                }
-                item => {
-                    error!(log, "unexpected item: {:?}", item);
-                    return Err(1);
-                }
-            }
+            client.get(key)?;
         }
         Operation::Rmv { key } => {
-            let req = Proto::Seq(vec![
-                Proto::Str("RM".to_owned()),
-                Proto::Bulk(Vec::from(key)),
-            ]);
-            if let Err(e) = stream.write(&req.ser()) {
-                crit!(log, "Failed to send command: {}.", e);
-                return Err(1);
-            }
-            let mut rdr = BufReader::new(stream);
-            let resp = Proto::from_bufread(&mut rdr).unwrap();
-            match resp {
-                Proto::Str(_) => {}
-                Proto::Null => {
-                    error!(log, "Key not found");
-                    return Err(1);
-                },
-                Proto::Err(e) => {
-                    error!(log, "server error: {}", e);
-                    return Err(1);
-                }
-                item => {
-                    error!(log, "unexpected item: {:?}", item);
-                    return Err(1);
-                }
-            }
+            client.rm(key)?;
         }
     }
     Ok(())
