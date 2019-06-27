@@ -2,7 +2,10 @@ extern crate failure;
 
 use std::path::Path;
 
-use crate::KvStore;
+pub mod kv;
+pub mod sledkv;
+
+use kv::KvStore;
 use crate::Result;
 
 /// KV server storage backend.
