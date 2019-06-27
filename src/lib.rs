@@ -7,6 +7,7 @@ pub use failure::Error;
 mod error;
 mod engine;
 pub mod protocol;
+pub mod thread_pool;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
