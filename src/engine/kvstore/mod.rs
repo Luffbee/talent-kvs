@@ -1,7 +1,7 @@
-mod kv;
 mod command;
-mod file;
 mod error;
+mod file;
+mod kv;
 
-pub use kv::*;
 pub use error::Error;
+pub use kv::*;

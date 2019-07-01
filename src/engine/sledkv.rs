@@ -1,14 +1,14 @@
-extern crate sled;
 extern crate failure;
+extern crate sled;
 
-pub use sled::{Db, Tree};
 use failure::format_err;
+pub use sled::{Db, Tree};
 
-use std::string::String;
+use std::fs;
 use std::path::Path;
-use std::fs::{self};
+use std::string::String;
 
-use crate::{KvsEngine, Result, KvsError};
+use crate::{KvsEngine, KvsError, Result};
 
 #[derive(Clone)]
 pub struct SledDb(Db);
@@ -29,7 +29,6 @@ impl SledDb {
         Ok(Self(Db::start_default(path)?))
     }
 }
-
 
 impl KvsEngine for SledDb {
     /// Set key-value.

@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 pub mod kvstore;
 pub mod sledkv;
 
-use kvstore::{KvStore, slog::Logger};
 use crate::Result;
+use kvstore::{slog::Logger, KvStore, KvStoreBuilder};
 
 /// KV server storage backend.
 pub trait KvsEngine: Clone + Send + 'static {
@@ -26,7 +26,7 @@ pub struct AKvStore(Arc<Mutex<KvStore>>);
 
 impl AKvStore {
     pub fn with_logger(path: impl AsRef<Path>, log: Logger) -> Result<Self> {
-        let kvs = KvStore::new(path).logger(log).build()?;
+        let kvs = KvStoreBuilder::new(path).logger(log).build()?;
         Ok(AKvStore(Arc::new(Mutex::new(kvs))))
     }
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {

@@ -66,7 +66,19 @@ pub struct KvStoreBuilder {
     cthreshold: usize,
 }
 
+#[allow(dead_code)]
 impl KvStoreBuilder {
+    /// Return a builder.
+    pub fn new(dir: impl AsRef<Path>) -> KvStoreBuilder {
+        let dir = dir.as_ref().to_owned();
+        KvStoreBuilder {
+            dir,
+            wthreshold: ACTIVE_THRESHOLD,
+            cthreshold: COMPACT_THRESHOLD,
+            log: None,
+        }
+    }
+
     /// Set logger.
     pub fn logger(mut self, log: Logger) -> Self {
         self.log = Some(log);
@@ -152,7 +164,7 @@ impl KvStoreBuilder {
             wthreshold: self.wthreshold,
             cthreshold: self.cthreshold,
             garbage_sz,
-            log: log,
+            log,
         })
     }
 
@@ -189,7 +201,8 @@ impl KvStoreBuilder {
                 let next_offset = stream.byte_offset();
                 match cmd? {
                     Command::Set(key, _) => {
-                        let old = index.insert(key, CmdInfo::new(*id, offset as u64, next_offset - offset));
+                        let old = index
+                            .insert(key, CmdInfo::new(*id, offset as u64, next_offset - offset));
                         sz += old.map_or(0, |i| i.len);
                     }
                     Command::Rm(key) => {
@@ -207,18 +220,7 @@ impl KvStoreBuilder {
 impl KvStore {
     /// Open a database with default configuration.
     pub fn open(dir: impl AsRef<Path>) -> Result<KvStore> {
-        Self::new(dir).build()
-    }
-
-    /// Return a builder.
-    pub fn new(dir: impl AsRef<Path>) -> KvStoreBuilder {
-        let dir = dir.as_ref().to_owned();
-        KvStoreBuilder {
-            dir,
-            wthreshold: ACTIVE_THRESHOLD,
-            cthreshold: COMPACT_THRESHOLD,
-            log: None,
-        }
+        KvStoreBuilder::new(dir).build()
     }
 
     /// If the key already in the store, update the value.  
@@ -365,14 +367,14 @@ impl KvStore {
                 rdr = file::open_r(self.datafile(data_id))?;
             }
 
-            rdr.seek(SeekFrom::Start(u64::from(*offset)))?;
+            rdr.seek(SeekFrom::Start(*offset))?;
             let cmd = Command::from_reader(&mut rdr)?;
             match cmd {
                 Command::Set(ref key, _) => {
                     let s = cmd.ser()?;
                     let len = s.len();
                     let offset = merge_wtr.seek(SeekFrom::End(0))?;
-                    merge_wtr.write(s.as_bytes())?;
+                    merge_wtr.write_all(s.as_bytes())?;
                     index.insert(key.to_owned(), CmdInfo::new(merge_id, offset, len));
                 }
                 Command::Rm(ref key) => {
@@ -401,7 +403,7 @@ impl KvStore {
             }
             vec.push(val);
         }
-        if vec.len() <= 0 {
+        if vec.is_empty() {
             return Ok(index);
         }
         vec.sort_unstable();

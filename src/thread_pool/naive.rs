@@ -7,13 +7,13 @@ pub struct NaiveThreadPool {}
 
 impl ThreadPool for NaiveThreadPool {
     fn new(_: u32) -> Result<Self> {
-        Ok(NaiveThreadPool{})
+        Ok(NaiveThreadPool {})
     }
 
     fn spawn<F>(&self, job: F)
     where
         F: FnOnce() + Send + 'static,
     {
-        thread::spawn(|| job());
+        thread::spawn(job);
     }
 }

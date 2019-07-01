@@ -6,11 +6,12 @@ extern crate structopt;
 use structopt::clap::arg_enum;
 use structopt::StructOpt;
 
-use std::net::{SocketAddr};
+use std::net::SocketAddr;
 use std::string::String;
 
-use kvs::slog::{crit,o, Drain, Logger};
-use kvs::{AKvStore, SledDb, KvsServer};
+use kvs::slog::{crit, o, Drain, Logger};
+use kvs::{KvServer, KvStore, SledDb};
+use kvs::thread_pool::*;
 
 const DB_DIR: &str = "./";
 
@@ -55,7 +56,7 @@ fn main() -> Result<(), i32> {
 
     let decorator = slog_term::TermDecorator::new().build();
     let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-    let drain = slog_async::Async::new(drain).build().fuse();
+    let drain = slog_async::Async::new(drain).chan_size(10240).build().fuse();
     let log = Logger::root(
         drain,
         o!(
@@ -64,29 +65,33 @@ fn main() -> Result<(), i32> {
             "address" => opt.addr.to_string(),
         ),
     );
+    let pool = match SharedQueueThreadPool::new(0) {
+        Ok(pool) => pool,
+        Err(e) => {
+            crit!(log, "failed to create thread pool: {}", e);
+            return Err(1);
+        }
+    };
 
     match opt.eng {
         Engine::kvs => {
             let eng_log = log.new(o!("engine" => "kvs"));
-            match AKvStore::with_logger(DB_DIR, eng_log) {
-                Ok(st) => KvsServer::new(st).start(opt.addr, log)?,
+            match KvStore::with_logger(DB_DIR, eng_log) {
+                Ok(st) => KvServer::new(st, pool, opt.addr, log.clone()).run()?,
                 Err(e) => {
                     crit!(log, "failed to start KvStore in {}: {}", DB_DIR, e);
                     return Err(1);
                 }
             }
         }
-        Engine::sled => {
-            match SledDb::open(DB_DIR) {
-                Ok(st) => KvsServer::new(st).start(opt.addr, log)?,
-                Err(e) => {
-                    crit!(log, "failed to start KvStore in {}: {}", DB_DIR, e);
-                    return Err(1);
-                }
+        Engine::sled => match SledDb::open(DB_DIR) {
+            Ok(st) => KvServer::new(st, pool, opt.addr, log.clone()).run()?,
+            Err(e) => {
+                crit!(log, "failed to start KvStore in {}: {}", DB_DIR, e);
+                return Err(1);
             }
-        }
+        },
     };
 
     Ok(())
 }
-

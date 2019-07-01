@@ -6,30 +6,37 @@ edition = "2018"
 description = "A key-value server implemented by rust."
 
 [dev-dependencies]
-assert_cmd = "0.11"
+assert_cmd = "0.11.1"
 criterion = "0.2.11"
 crossbeam-utils = "0.6.5"
-predicates = "1.0.0"
+predicates = "1.0.1"
 rand = "0.6.5"
-tempfile = "3.0.7"
-walkdir = "2.2.7"
-slog = { version = "2.4.1", features = ["max_level_warn"] }
+tempfile = "3.0.8"
+walkdir = "2.2.8"
 
 [[bench]]
-name = "benches"
+name = "engine"
+harness = false
+
+[[bench]]
+name = "thread_pool"
 harness = false
 
 [dependencies]
 failure = "0.1.5"
 failure_derive = "0.1.5"
 bson = "0.13.0"
-serde_derive = "1.0.92"
-serde = "1.0.92"
-ron = "*"
+serde_derive = "1.0.94"
+serde = "1.0.94"
+ron = "0.5.1"
 serde_json = "1.0.39"
-slog = { version = "2.4.1", features = ["max_level_info"] }
+slog = { version = "2.4.1", features = ["max_level_warn"] }
 slog-term = "2.4.0"
 slog-async = "2.3.0"
 slog-stdlog = "3.0.2"
-structopt = "0.2.16"
+structopt = "0.2.18"
 sled = "0.24.1"
+crossbeam = "0.7.1"
+crossbeam-channel = "0.3.8"
+num_cpus = "1.10.1"
+rayon = "1.1.0"

@@ -61,7 +61,10 @@ impl Proto {
     pub fn from_bufread(rdr: &mut impl BufRead) -> Result<Proto> {
         let mut prefix = [0; 1];
         let mut buf: Vec<u8> = Vec::new();
-        rdr.read_exact(&mut prefix)?;
+        if let Err(e) = rdr.read_exact(&mut prefix) {
+            //eprintln!("EXEXEXEXEXEXEX");
+            Err(e)?;
+        }
         match prefix[0] {
             b'+' => {
                 rdr.read_until(b'\n', &mut buf)?;
