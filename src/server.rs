@@ -5,7 +5,7 @@ extern crate slog_stdlog;
 use failure::format_err;
 
 use std::io::{prelude::*, BufRead, BufReader};
-use std::net::{SocketAddr, TcpListener, TcpStream, Shutdown};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::string::String;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -122,10 +122,6 @@ fn handle_client<EG: KvsEngine>(store: EG, mut stream: TcpStream, log: Logger) {
         if let Err(e) = wtr.write_all(&Proto::Err(err.to_string()).ser()) {
             error!(log, "failed to write stream: {}", e);
         }
-    }
-
-    if let Err(e) = stream.shutdown(Shutdown::Both) {
-        error!(log, "failed to shutdown peer: {}", e);
     }
 }
 
