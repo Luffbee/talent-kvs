@@ -1,6 +1,7 @@
 extern crate criterion;
 extern crate crossbeam;
 extern crate tempfile;
+extern crate kvs;
 
 use criterion::*;
 use crossbeam::sync::WaitGroup;
@@ -14,8 +15,256 @@ use std::thread;
 use std::time::Duration;
 //use std::sync::Arc;
 
-use kvs::thread_pool::{SharedQueueThreadPool, ThreadPool};
-use kvs::{KvClient, KvServer, KvStore};
+use kvs::thread_pool::{SharedQueueThreadPool, RayonThreadPool, ThreadPool};
+use kvs::{KvClient, KvServer, KvStore, SledDb};
+
+fn write_rayon_sled(c: &mut Criterion) {
+    let inputs = &[1, 2, 4, 6, 8];
+    c.bench(
+        "write",
+        ParameterizedBenchmark::new(
+            "rayon_sled",
+            move |b, &&num| {
+                let sz: usize = 1000;
+                let addr = SocketAddr::from_str("127.0.0.1:5979").unwrap();
+
+                let dir = TempDir::new().unwrap();
+                let eng = SledDb::open(dir.path()).unwrap();
+                let pool = RayonThreadPool::new(num).unwrap();
+                let adr = addr.clone();
+                let server = KvServer::new(eng, pool, adr, None);
+                let handle = server.start().unwrap();
+
+                let value = "the-value".to_owned();
+                let keys: Vec<String> = (0..sz).map(|x| format!("key{:04}", x)).collect();
+                let pool = RayonThreadPool::new(sz as u32).unwrap();
+                // wait for server
+                thread::sleep(Duration::from_secs(1));
+
+                b.iter(|| {
+                    let wg = WaitGroup::new();
+                    for i in 0..sz {
+                        let adr = addr.clone();
+                        let k = keys[i].clone();
+                        let v = value.clone();
+                        let wg = wg.clone();
+                        pool.spawn(move || {
+                            match KvClient::new(adr, None) {
+                                Ok(mut cli) => {
+                                    if let Err(e) = cli.set(k, v) {
+                                        eprintln!("11111111111EEEEEEEEEEEEEEE {}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("11111111111111111CCCCCCCCCCCCCCCCC {}", e);
+                                }
+                            }
+                            drop(wg);
+                        });
+                    }
+                    wg.wait();
+                });
+
+                server.shutdown();
+                if let Err(e) = handle.join() {
+                    eprintln!("*******************listener panicked: {:?}", e);
+                }
+            },
+            inputs,
+        )
+        .sample_size(5),
+    );
+}
+
+fn read_rayon_sled(c: &mut Criterion) {
+    let inputs = &[1, 2, 4, 6, 8];
+    c.bench(
+        "read",
+        ParameterizedBenchmark::new(
+            "rayon_sled",
+            move |b, &&num| {
+                let sz: usize = 1000;
+                let addr = SocketAddr::from_str("127.0.0.1:5979").unwrap();
+
+                let dir = TempDir::new().unwrap();
+                let eng = SledDb::open(dir.path()).unwrap();
+                let pool = RayonThreadPool::new(num).unwrap();
+                let adr = addr.clone();
+                let server = KvServer::new(eng, pool, adr, None);
+                let handle = server.start().unwrap();
+
+                let value = "the-value".to_owned();
+                let keys: Vec<String> = (0..sz).map(|x| format!("key{:04}", x)).collect();
+
+                // wait for server
+                thread::sleep(Duration::from_secs(1));
+
+                for k in keys.iter() {
+                    KvClient::new(addr.clone(), None)
+                        .unwrap()
+                        .set(k.clone(), value.clone())
+                        .unwrap();
+                }
+
+                let pool = RayonThreadPool::new(sz as u32).unwrap();
+
+                b.iter(|| {
+                    let wg = WaitGroup::new();
+                    for i in 0..sz {
+                        let adr = addr.clone();
+                        let k = keys[i].clone();
+                        let wg = wg.clone();
+                        pool.spawn(move || {
+                            match KvClient::new(adr, None) {
+                                Ok(mut cli) => {
+                                    if let Err(e) = cli.get(k) {
+                                        eprintln!("11111111111EEEEEEEEEEEEEEE {}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("11111111111111111CCCCCCCCCCCCCCCCC {}", e);
+                                }
+                            }
+                            drop(wg);
+                        });
+                    }
+                    wg.wait();
+                });
+
+                server.shutdown();
+                if let Err(e) = handle.join() {
+                    eprintln!("*******************listener panicked: {:?}", e);
+                }
+            },
+            inputs,
+        )
+        .sample_size(5),
+    );
+}
+
+fn write_rayon_kvstore(c: &mut Criterion) {
+    let inputs = &[1, 2, 4, 6, 8];
+    c.bench(
+        "write",
+        ParameterizedBenchmark::new(
+            "rayon_kvstore",
+            move |b, &&num| {
+                let sz: usize = 1000;
+                let addr = SocketAddr::from_str("127.0.0.1:5979").unwrap();
+
+                let dir = TempDir::new().unwrap();
+                let eng = KvStore::open(dir.path()).unwrap();
+                let pool = RayonThreadPool::new(num).unwrap();
+                let adr = addr.clone();
+                let server = KvServer::new(eng, pool, adr, None);
+                let handle = server.start().unwrap();
+
+                let value = "the-value".to_owned();
+                let keys: Vec<String> = (0..sz).map(|x| format!("key{:04}", x)).collect();
+                let pool = RayonThreadPool::new(sz as u32).unwrap();
+                // wait for server
+                thread::sleep(Duration::from_secs(1));
+
+                b.iter(|| {
+                    let wg = WaitGroup::new();
+                    for i in 0..sz {
+                        let adr = addr.clone();
+                        let k = keys[i].clone();
+                        let v = value.clone();
+                        let wg = wg.clone();
+                        pool.spawn(move || {
+                            match KvClient::new(adr, None) {
+                                Ok(mut cli) => {
+                                    if let Err(e) = cli.set(k, v) {
+                                        eprintln!("11111111111EEEEEEEEEEEEEEE {}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("11111111111111111CCCCCCCCCCCCCCCCC {}", e);
+                                }
+                            }
+                            drop(wg);
+                        });
+                    }
+                    wg.wait();
+                });
+
+                server.shutdown();
+                if let Err(e) = handle.join() {
+                    eprintln!("*******************listener panicked: {:?}", e);
+                }
+            },
+            inputs,
+        )
+        .sample_size(5),
+    );
+}
+
+fn read_rayon_kvstore(c: &mut Criterion) {
+    let inputs = &[1, 2, 4, 6, 8];
+    c.bench(
+        "read",
+        ParameterizedBenchmark::new(
+            "rayon_kvstore",
+            move |b, &&num| {
+                let sz: usize = 1000;
+                let addr = SocketAddr::from_str("127.0.0.1:5979").unwrap();
+
+                let dir = TempDir::new().unwrap();
+                let eng = KvStore::open(dir.path()).unwrap();
+                let pool = RayonThreadPool::new(num).unwrap();
+                let adr = addr.clone();
+                let server = KvServer::new(eng, pool, adr, None);
+                let handle = server.start().unwrap();
+
+                let value = "the-value".to_owned();
+                let keys: Vec<String> = (0..sz).map(|x| format!("key{:04}", x)).collect();
+
+                // wait for server
+                thread::sleep(Duration::from_secs(1));
+
+                for k in keys.iter() {
+                    KvClient::new(addr.clone(), None)
+                        .unwrap()
+                        .set(k.clone(), value.clone())
+                        .unwrap();
+                }
+
+                let pool = RayonThreadPool::new(sz as u32).unwrap();
+
+                b.iter(|| {
+                    let wg = WaitGroup::new();
+                    for i in 0..sz {
+                        let adr = addr.clone();
+                        let k = keys[i].clone();
+                        let wg = wg.clone();
+                        pool.spawn(move || {
+                            match KvClient::new(adr, None) {
+                                Ok(mut cli) => {
+                                    if let Err(e) = cli.get(k) {
+                                        eprintln!("11111111111EEEEEEEEEEEEEEE {}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("11111111111111111CCCCCCCCCCCCCCCCC {}", e);
+                                }
+                            }
+                            drop(wg);
+                        });
+                    }
+                    wg.wait();
+                });
+
+                server.shutdown();
+                if let Err(e) = handle.join() {
+                    eprintln!("*******************listener panicked: {:?}", e);
+                }
+            },
+            inputs,
+        )
+        .sample_size(5),
+    );
+}
 
 fn write_queued_kvstore(c: &mut Criterion) {
     let inputs = &[1, 2, 4, 6, 8];
@@ -36,7 +285,7 @@ fn write_queued_kvstore(c: &mut Criterion) {
 
                 let value = "the-value".to_owned();
                 let keys: Vec<String> = (0..sz).map(|x| format!("key{:04}", x)).collect();
-                let pool = SharedQueueThreadPool::new(50).unwrap();
+                let pool = SharedQueueThreadPool::new(sz as u32).unwrap();
                 // wait for server
                 thread::sleep(Duration::from_secs(1));
 
@@ -105,7 +354,7 @@ fn read_queued_kvstore(c: &mut Criterion) {
                         .unwrap();
                 }
 
-                let pool = SharedQueueThreadPool::new(50).unwrap();
+                let pool = SharedQueueThreadPool::new(sz as u32).unwrap();
 
                 b.iter(|| {
                     let wg = WaitGroup::new();
@@ -141,5 +390,13 @@ fn read_queued_kvstore(c: &mut Criterion) {
     );
 }
 
-criterion_group!(benches, write_queued_kvstore, read_queued_kvstore);
+criterion_group!(
+    benches,
+    write_queued_kvstore,
+    read_queued_kvstore,
+    write_rayon_kvstore,
+    read_rayon_kvstore,
+    write_rayon_sled,
+    read_rayon_sled,
+);
 criterion_main!(benches);
