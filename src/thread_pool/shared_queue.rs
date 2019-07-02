@@ -4,6 +4,7 @@ extern crate num_cpus;
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 
 use std::thread::{self, JoinHandle};
+use std::sync::Arc;
 
 use super::ThreadPool;
 use crate::Result;
@@ -21,13 +22,15 @@ enum Control {
     Stop,
 }
 
-#[allow(dead_code)]
-pub struct SharedQueueThreadPool {
+struct QueuedThreadPool {
     size: u32,
     worker: Sender<Message>,
     monitor: Sender<Control>,
-    monitor_handle: JoinHandle<()>,
+    monitor_handle: Option<JoinHandle<()>>
 }
+
+#[derive(Clone)]
+pub struct SharedQueueThreadPool(Arc<QueuedThreadPool>);
 
 struct Monitor {
     size: u32,
@@ -50,16 +53,16 @@ impl ThreadPool for SharedQueueThreadPool {
         }
         let (worker, worker_rx) = unbounded();
         let (monitor, monitor_rx) = unbounded();
-        let monitor_handle = thread::spawn(move || {
+        let monitor_handle = Some(thread::spawn(move || {
             let mut monitor = Monitor::new(size, monitor_rx, worker_rx);
             monitor.watch();
-        });
-        Ok(SharedQueueThreadPool {
+        }));
+        Ok(SharedQueueThreadPool(Arc::new(QueuedThreadPool {
             size,
             worker,
             monitor,
             monitor_handle,
-        })
+        })))
     }
 
     fn spawn<F>(&self, job: F)
@@ -67,16 +70,19 @@ impl ThreadPool for SharedQueueThreadPool {
         F: FnOnce() + Send + 'static,
     {
         // Check monitor is alive.
-        self.monitor.send(Control::GoOn).expect("monitor dead");
-        self.worker.send(Message::Run(Box::new(job))).unwrap();
+        self.0.monitor.send(Control::GoOn).expect("monitor dead");
+        self.0.worker.send(Message::Run(Box::new(job))).unwrap();
     }
 }
 
-impl Drop for SharedQueueThreadPool {
+impl Drop for QueuedThreadPool {
     fn drop(&mut self) {
         self.monitor.send(Control::Stop).unwrap();
         for _ in 0..self.size {
             self.worker.send(Message::Shutdown).unwrap();
+        }
+        if let Err(e) = self.monitor_handle.take().unwrap().join() {
+            eprintln!("monitor panicked: {:?}", e);
         }
     }
 }
