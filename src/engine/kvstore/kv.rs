@@ -1,9 +1,11 @@
 extern crate chashmap;
+extern crate crossbeam_channel;
 pub extern crate slog;
 extern crate slog_stdlog;
 
 use chashmap::CHashMap;
-use slog::{debug, error, info, o, warn, Drain, Logger};
+use crossbeam_channel::{unbounded, Sender};
+use slog::{crit, debug, error, info, o, warn, Drain, Logger};
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -13,6 +15,7 @@ use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
+use std::thread::{self, JoinHandle};
 
 use super::command::Command;
 use super::file::{self, Fdr, Fdw, Fid, Location};
@@ -36,6 +39,11 @@ impl CmdInfo {
             len,
         }
     }
+}
+
+enum Action {
+    Compact,
+    Shutdown,
 }
 
 /// Store key-value pairs.
@@ -62,6 +70,10 @@ pub struct KvStore {
     writer: Arc<Mutex<()>>,
     compact_lock: Arc<Mutex<()>>,
     lowest_id: Arc<AtomicUsize>,
+
+    sx: Sender<Action>,
+    compacter: Option<Arc<JoinHandle<()>>>,
+    counter: Arc<AtomicUsize>,
 
     fds: RefCell<FdrMap>,
 }
@@ -130,7 +142,7 @@ impl KvStore {
         let gbg_sz = self.garbage_sz.fetch_add(new_gbg, Ordering::SeqCst);
         drop(writer);
         if gbg_sz > self.cthreshold {
-            self.compact()?;
+            self.call_compacter();
         }
         Ok(())
     }
@@ -151,7 +163,7 @@ impl KvStore {
         let gbg_sz = self.garbage_sz.fetch_add(new_gbg, Ordering::SeqCst);
         drop(writer);
         if gbg_sz > self.cthreshold {
-            self.compact()?;
+            self.call_compacter();
         }
         if new_gbg == info.len {
             Err(Error::KeyNotFound(key))?;
@@ -179,10 +191,11 @@ impl KvStore {
     fn fetch(&self, loc: &Location) -> Result<Command> {
         debug!(self.log, "fetching location: {:?}", loc);
         let mut fds = self.fds.borrow_mut();
+        let mut update = false;
         let fd = match fds.get_mut(&loc.id) {
             Some(fd) => fd,
             None => {
-                self.update_fds();
+                update = true;
                 fds.insert(loc.id, file::fdr(&self.dir, loc.id)?);
                 fds.get_mut(&loc.id).unwrap()
             }
@@ -195,7 +208,18 @@ impl KvStore {
 
         let file = &mut fd.rdr;
         file.seek(SeekFrom::Start(loc.offset))?;
-        Command::from_reader(file)
+        let res = Command::from_reader(file);
+        drop(fds);
+        if update {
+            self.update_fds();
+        }
+        res
+    }
+
+    fn call_compacter(&self) {
+        if let Err(e) = self.sx.send(Action::Compact) {
+            crit!(self.log, "failed to call compacter: {}", e);
+        }
     }
 
     /// remove old fds
@@ -289,24 +313,16 @@ impl KvStore {
             }
         }
         self.garbage_sz.fetch_add(new_gbg, Ordering::SeqCst);
-
-        self.update_fds();
-        self.lowest_id.store(merge_id, Ordering::SeqCst);
+        let low = self.lowest_id.swap(merge_id, Ordering::SeqCst);
         drop(lock);
 
-        let new_fds = self.fds.borrow_mut().split_off(&merge_id);
-        for id in self.fds.borrow().keys() {
-            let path = self.datafile(*id);
+        for id in low..merge_id {
+            let path = self.datafile(id);
             info!(self.log, "delete file: {:?}", path);
             if let Err(e) = fs::remove_file(&path) {
                 error!(self.log, "failed to delete file {:?}: {}", path, e);
             }
         }
-
-        self.fds.replace(new_fds);
-        self.fds
-            .borrow_mut()
-            .insert(merge_id, file::fdr(&self.dir, merge_id)?);
 
         Ok(())
     }
@@ -328,13 +344,7 @@ impl KvStore {
 
 impl Clone for KvStore {
     fn clone(&self) -> Self {
-        let mut fds = FdrMap::new();
-        for k in self.fds.borrow().keys() {
-            if let Ok(fd) = file::fdr(&self.dir, *k) {
-                fds.insert(*k, fd);
-            }
-        }
-
+        self.counter.fetch_add(1, Ordering::SeqCst);
         Self {
             dir: self.dir.clone(),
             log: self.log.clone(),
@@ -347,7 +357,28 @@ impl Clone for KvStore {
             compact_lock: self.compact_lock.clone(),
             lowest_id: self.lowest_id.clone(),
 
-            fds: RefCell::new(fds),
+            sx: self.sx.clone(),
+            compacter: self.compacter.clone(),
+            counter: self.counter.clone(),
+
+            fds: RefCell::new(FdrMap::new()),
+        }
+    }
+}
+
+impl Drop for KvStore {
+    fn drop(&mut self) {
+        if self.counter.fetch_sub(1, Ordering::SeqCst) <= 1 {
+            if self.compacter.is_none() {
+                if let Err(e) = self.sx.send(Action::Shutdown) {
+                    crit!(self.log, "failed to shutdown compacter: {}", e);
+                }
+                if let Ok(handle) = Arc::try_unwrap(self.compacter.take().unwrap()) {
+                    if let Err(e) = handle.join() {
+                        crit!(self.log, "compacter panicked: {:?}", e);
+                    }
+                }
+            }
         }
     }
 }
@@ -445,7 +476,9 @@ impl KvStoreBuilder {
             }
         }
 
-        Ok(KvStore {
+        let (sx, rx) = unbounded();
+
+        let mut this = KvStore {
             log,
             dir: self.dir,
             cthreshold: self.cthreshold,
@@ -455,8 +488,31 @@ impl KvStoreBuilder {
             writer: Arc::new(Mutex::new(())),
             compact_lock: Arc::new(Mutex::new(())),
             lowest_id: Arc::new(AtomicUsize::new(low)),
+            sx,
+            compacter: None,
+            counter: Arc::new(AtomicUsize::new(1)),
             fds: RefCell::new(fds),
-        })
+        };
+
+        let compacter = this.clone();
+
+        let handle = thread::spawn(move || loop {
+            match rx.recv().unwrap() {
+                Action::Shutdown => break,
+                Action::Compact => {
+                    let gbg_sz = compacter.garbage_sz.load(Ordering::SeqCst);
+                    if gbg_sz > compacter.cthreshold {
+                        if let Err(e) = compacter.compact() {
+                            error!(compacter.log, "failed to compact: {}", e);
+                        }
+                    }
+                }
+            }
+        });
+
+        this.compacter = Some(Arc::new(handle));
+
+        Ok(this)
     }
 
     /// Return sorted file ids.
