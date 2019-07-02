@@ -2,6 +2,7 @@ extern crate failure;
 extern crate slog_async;
 extern crate slog_term;
 extern crate structopt;
+extern crate kvs;
 
 use structopt::clap::arg_enum;
 use structopt::StructOpt;
@@ -10,7 +11,7 @@ use std::net::SocketAddr;
 use std::string::String;
 
 use kvs::slog::{crit, o, Drain, Logger};
-use kvs::{KvServer, KvStore, SledDb};
+use kvs::{KvsServer, KvStore, SledDb};
 use kvs::thread_pool::*;
 
 const DB_DIR: &str = "./";
@@ -77,7 +78,7 @@ fn main() -> Result<(), i32> {
         Engine::kvs => {
             let eng_log = log.new(o!("engine" => "kvs"));
             match KvStore::with_logger(DB_DIR, eng_log) {
-                Ok(st) => KvServer::new(st, pool, opt.addr, log.clone()).run()?,
+                Ok(st) => KvsServer::new(st, pool, opt.addr, log.clone()).run()?,
                 Err(e) => {
                     crit!(log, "failed to start KvStore in {}: {}", DB_DIR, e);
                     return Err(1);
@@ -85,7 +86,7 @@ fn main() -> Result<(), i32> {
             }
         }
         Engine::sled => match SledDb::open(DB_DIR) {
-            Ok(st) => KvServer::new(st, pool, opt.addr, log.clone()).run()?,
+            Ok(st) => KvsServer::new(st, pool, opt.addr, log.clone()).run()?,
             Err(e) => {
                 crit!(log, "failed to start KvStore in {}: {}", DB_DIR, e);
                 return Err(1);

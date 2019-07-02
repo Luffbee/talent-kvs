@@ -12,8 +12,8 @@ pub mod thread_pool;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub use client::KvClient;
+pub use client::KvsClient;
 pub use engine::kvstore::{slog, Error as KvsError, KvStore as RealKvStore};
 pub use engine::sledkv::SledDb;
 pub use engine::{KvStore, KvsEngine};
-pub use server::KvServer;
+pub use server::KvsServer;

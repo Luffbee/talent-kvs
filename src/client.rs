@@ -8,12 +8,12 @@ use std::net::{SocketAddr, TcpStream};
 
 use crate::protocol::Proto;
 
-pub struct KvClient {
+pub struct KvsClient {
     stream: TcpStream,
     log: Logger,
 }
 
-impl KvClient {
+impl KvsClient {
     pub fn new(addr: SocketAddr, log: Option<Logger>) -> Result<Self, i32> {
         let log = log
             .unwrap_or_else(|| Logger::root(slog_stdlog::StdLog.fuse(), o!()));

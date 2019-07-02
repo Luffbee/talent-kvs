@@ -18,7 +18,7 @@ use crate::slog::{crit, error, info, o, Drain, Logger};
 use crate::thread_pool::ThreadPool;
 use crate::{Error, KvsEngine, KvsError};
 
-pub struct KvServer<EG: KvsEngine, TP: ThreadPool> {
+pub struct KvsServer<EG: KvsEngine, TP: ThreadPool> {
     store: EG,
     pool: Arc<Mutex<TP>>,
     stop: Arc<AtomicBool>,
@@ -26,7 +26,7 @@ pub struct KvServer<EG: KvsEngine, TP: ThreadPool> {
     log: Logger,
 }
 
-impl<EG: KvsEngine, TP: ThreadPool> Clone for KvServer<EG, TP> {
+impl<EG: KvsEngine, TP: ThreadPool> Clone for KvsServer<EG, TP> {
     fn clone(&self) -> Self {
         Self {
             store: self.store.clone(),
@@ -38,7 +38,7 @@ impl<EG: KvsEngine, TP: ThreadPool> Clone for KvServer<EG, TP> {
     }
 }
 
-impl<EG: KvsEngine, TP: ThreadPool> KvServer<EG, TP> {
+impl<EG: KvsEngine, TP: ThreadPool> KvsServer<EG, TP> {
     pub fn new<LOG>(store: EG, pool: TP, addr: SocketAddr, log: LOG) -> Self
     where
         LOG: Into<Option<Logger>>,

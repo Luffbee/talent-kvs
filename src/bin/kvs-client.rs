@@ -2,13 +2,14 @@ extern crate slog;
 extern crate slog_async;
 extern crate slog_term;
 extern crate structopt;
+extern crate kvs;
 
 use slog::{o, Drain, Logger};
 use structopt::StructOpt;
 
 use std::net::SocketAddr;
 
-use kvs::KvClient;
+use kvs::KvsClient;
 
 #[derive(StructOpt)]
 #[structopt(
@@ -60,7 +61,7 @@ fn main() -> Result<(), i32> {
     let drain = slog_async::Async::new(drain).build().fuse();
     let log = Logger::root(drain, o!());
 
-    let mut client = KvClient::new(opt.addr, Some(log))?;
+    let mut client = KvsClient::new(opt.addr, Some(log))?;
 
     match opt.op {
         Operation::Set { key, val } => {

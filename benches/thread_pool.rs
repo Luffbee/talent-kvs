@@ -16,7 +16,7 @@ use std::time::Duration;
 //use std::sync::Arc;
 
 use kvs::thread_pool::{SharedQueueThreadPool, RayonThreadPool, ThreadPool};
-use kvs::{KvClient, KvServer, KvStore, SledDb};
+use kvs::{KvsClient, KvsServer, KvStore, SledDb};
 
 const SZ: usize = 1000;
 const NUMS: [u32; 5] = [1, 2, 4, 6, 8];
@@ -34,7 +34,7 @@ fn write_rayon_sled(c: &mut Criterion) {
                 let eng = SledDb::open(dir.path()).unwrap();
                 let pool = RayonThreadPool::new(num).unwrap();
                 let adr = addr.clone();
-                let server = KvServer::new(eng, pool, adr, None);
+                let server = KvsServer::new(eng, pool, adr, None);
                 let handle = server.start().unwrap();
 
                 let value = "the-value".to_owned();
@@ -51,7 +51,7 @@ fn write_rayon_sled(c: &mut Criterion) {
                         let v = value.clone();
                         let wg = wg.clone();
                         pool.spawn(move || {
-                            match KvClient::new(adr, None) {
+                            match KvsClient::new(adr, None) {
                                 Ok(mut cli) => {
                                     if let Err(e) = cli.set(k, v) {
                                         eprintln!("11111111111EEEEEEEEEEEEEEE {}", e);
@@ -91,7 +91,7 @@ fn read_rayon_sled(c: &mut Criterion) {
                 let eng = SledDb::open(dir.path()).unwrap();
                 let pool = RayonThreadPool::new(num).unwrap();
                 let adr = addr.clone();
-                let server = KvServer::new(eng, pool, adr, None);
+                let server = KvsServer::new(eng, pool, adr, None);
                 let handle = server.start().unwrap();
 
                 let value = "the-value".to_owned();
@@ -101,7 +101,7 @@ fn read_rayon_sled(c: &mut Criterion) {
                 thread::sleep(Duration::from_secs(1));
 
                 for k in keys.iter() {
-                    KvClient::new(addr.clone(), None)
+                    KvsClient::new(addr.clone(), None)
                         .unwrap()
                         .set(k.clone(), value.clone())
                         .unwrap();
@@ -116,7 +116,7 @@ fn read_rayon_sled(c: &mut Criterion) {
                         let k = keys[i].clone();
                         let wg = wg.clone();
                         pool.spawn(move || {
-                            match KvClient::new(adr, None) {
+                            match KvsClient::new(adr, None) {
                                 Ok(mut cli) => {
                                     if let Err(e) = cli.get(k) {
                                         eprintln!("11111111111EEEEEEEEEEEEEEE {}", e);
@@ -156,7 +156,7 @@ fn write_rayon_kvstore(c: &mut Criterion) {
                 let eng = KvStore::open(dir.path()).unwrap();
                 let pool = RayonThreadPool::new(num).unwrap();
                 let adr = addr.clone();
-                let server = KvServer::new(eng, pool, adr, None);
+                let server = KvsServer::new(eng, pool, adr, None);
                 let handle = server.start().unwrap();
 
                 let value = "the-value".to_owned();
@@ -173,7 +173,7 @@ fn write_rayon_kvstore(c: &mut Criterion) {
                         let v = value.clone();
                         let wg = wg.clone();
                         pool.spawn(move || {
-                            match KvClient::new(adr, None) {
+                            match KvsClient::new(adr, None) {
                                 Ok(mut cli) => {
                                     if let Err(e) = cli.set(k, v) {
                                         eprintln!("11111111111EEEEEEEEEEEEEEE {}", e);
@@ -213,7 +213,7 @@ fn read_rayon_kvstore(c: &mut Criterion) {
                 let eng = KvStore::open(dir.path()).unwrap();
                 let pool = RayonThreadPool::new(num).unwrap();
                 let adr = addr.clone();
-                let server = KvServer::new(eng, pool, adr, None);
+                let server = KvsServer::new(eng, pool, adr, None);
                 let handle = server.start().unwrap();
 
                 let value = "the-value".to_owned();
@@ -223,7 +223,7 @@ fn read_rayon_kvstore(c: &mut Criterion) {
                 thread::sleep(Duration::from_secs(1));
 
                 for k in keys.iter() {
-                    KvClient::new(addr.clone(), None)
+                    KvsClient::new(addr.clone(), None)
                         .unwrap()
                         .set(k.clone(), value.clone())
                         .unwrap();
@@ -238,7 +238,7 @@ fn read_rayon_kvstore(c: &mut Criterion) {
                         let k = keys[i].clone();
                         let wg = wg.clone();
                         pool.spawn(move || {
-                            match KvClient::new(adr, None) {
+                            match KvsClient::new(adr, None) {
                                 Ok(mut cli) => {
                                     if let Err(e) = cli.get(k) {
                                         eprintln!("11111111111EEEEEEEEEEEEEEE {}", e);
@@ -278,7 +278,7 @@ fn write_queued_kvstore(c: &mut Criterion) {
                 let eng = KvStore::open(dir.path()).unwrap();
                 let pool = SharedQueueThreadPool::new(num).unwrap();
                 let adr = addr.clone();
-                let server = KvServer::new(eng, pool, adr, None);
+                let server = KvsServer::new(eng, pool, adr, None);
                 let handle = server.start().unwrap();
 
                 let value = "the-value".to_owned();
@@ -295,7 +295,7 @@ fn write_queued_kvstore(c: &mut Criterion) {
                         let v = value.clone();
                         let wg = wg.clone();
                         pool.spawn(move || {
-                            match KvClient::new(adr, None) {
+                            match KvsClient::new(adr, None) {
                                 Ok(mut cli) => {
                                     if let Err(e) = cli.set(k, v) {
                                         eprintln!("11111111111EEEEEEEEEEEEEEE {}", e);
@@ -335,7 +335,7 @@ fn read_queued_kvstore(c: &mut Criterion) {
                 let eng = KvStore::open(dir.path()).unwrap();
                 let pool = SharedQueueThreadPool::new(num).unwrap();
                 let adr = addr.clone();
-                let server = KvServer::new(eng, pool, adr, None);
+                let server = KvsServer::new(eng, pool, adr, None);
                 let handle = server.start().unwrap();
 
                 let value = "the-value".to_owned();
@@ -345,7 +345,7 @@ fn read_queued_kvstore(c: &mut Criterion) {
                 thread::sleep(Duration::from_secs(1));
 
                 for k in keys.iter() {
-                    KvClient::new(addr.clone(), None)
+                    KvsClient::new(addr.clone(), None)
                         .unwrap()
                         .set(k.clone(), value.clone())
                         .unwrap();
@@ -360,7 +360,7 @@ fn read_queued_kvstore(c: &mut Criterion) {
                         let k = keys[i].clone();
                         let wg = wg.clone();
                         pool.spawn(move || {
-                            match KvClient::new(adr, None) {
+                            match KvsClient::new(adr, None) {
                                 Ok(mut cli) => {
                                     if let Err(e) = cli.get(k) {
                                         eprintln!("11111111111EEEEEEEEEEEEEEE {}", e);

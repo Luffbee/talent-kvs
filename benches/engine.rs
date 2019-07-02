@@ -1,3 +1,5 @@
+extern crate kvs;
+
 use criterion::*;
 use rand::distributions::{Alphanumeric, Uniform};
 use rand::{thread_rng, Rng};
