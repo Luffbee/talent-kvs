@@ -14,8 +14,8 @@ use std::thread;
 use std::time::Duration;
 //use std::sync::Arc;
 
-use kvs::thread_pool::{RayonThreadPool, SharedQueueThreadPool, ThreadPool};
-use kvs::{KvClient, KvServer, KvStore, SledDb};
+use kvs::thread_pool::{SharedQueueThreadPool, ThreadPool};
+use kvs::{KvClient, KvServer, KvStore};
 
 fn write_queued_kvstore(c: &mut Criterion) {
     let inputs = &[1, 2, 4, 6, 8];

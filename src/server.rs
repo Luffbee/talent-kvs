@@ -32,7 +32,7 @@ impl<EG: KvsEngine, TP: ThreadPool> Clone for KvServer<EG, TP> {
             store: self.store.clone(),
             pool: self.pool.clone(),
             stop: self.stop.clone(),
-            addr: self.addr.clone(),
+            addr: self.addr,
             log: self.log.clone(),
         }
     }
