@@ -59,7 +59,7 @@ impl KvClient {
         Ok(())
     }
 
-    pub fn get(&mut self, key: String) -> Result<(), i32> {
+    pub fn get(&mut self, key: String) -> Result<Option<String>, i32> {
         let req = Proto::Seq(vec![
             Proto::Str("GET".to_owned()),
             Proto::Bulk(Vec::from(key)),
@@ -72,21 +72,20 @@ impl KvClient {
         let resp = Proto::from_bufread(&mut rdr).unwrap();
         match resp {
             Proto::Bulk(v) => {
-                println!("{}", String::from_utf8_lossy(&v));
+                Ok(Some(String::from_utf8_lossy(&v).into_owned()))
             }
             Proto::Null => {
-                println!("Key not found");
+                Ok(None)
             }
             Proto::Err(e) => {
                 error!(self.log, "server error: {}", e);
-                return Err(6);
+                Err(6)
             }
             item => {
                 error!(self.log, "unexpected item: {:?}", item);
-                return Err(7);
+                Err(7)
             }
         }
-        Ok(())
     }
 
     pub fn rm(&mut self, key: String) -> Result<(), i32> {

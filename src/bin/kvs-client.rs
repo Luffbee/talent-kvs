@@ -67,7 +67,10 @@ fn main() -> Result<(), i32> {
             client.set(key, val)?;
         }
         Operation::Get { key } => {
-            client.get(key)?;
+            match client.get(key)? {
+                Some(s) => println!("{}", s),
+                None => println!("Key not found"), 
+            }
         }
         Operation::Rmv { key } => {
             client.rm(key)?;
