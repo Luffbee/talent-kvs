@@ -18,14 +18,16 @@ use std::time::Duration;
 use kvs::thread_pool::{SharedQueueThreadPool, RayonThreadPool, ThreadPool};
 use kvs::{KvClient, KvServer, KvStore, SledDb};
 
+const SZ: usize = 1000;
+const NUMS: [u32; 5] = [1, 2, 4, 6, 8];
+
 fn write_rayon_sled(c: &mut Criterion) {
-    let inputs = &[1, 2, 4, 6, 8];
+    let inputs = &NUMS;
     c.bench(
         "write",
         ParameterizedBenchmark::new(
             "rayon_sled",
             move |b, &&num| {
-                let sz: usize = 1000;
                 let addr = SocketAddr::from_str("127.0.0.1:5979").unwrap();
 
                 let dir = TempDir::new().unwrap();
@@ -36,14 +38,14 @@ fn write_rayon_sled(c: &mut Criterion) {
                 let handle = server.start().unwrap();
 
                 let value = "the-value".to_owned();
-                let keys: Vec<String> = (0..sz).map(|x| format!("key{:04}", x)).collect();
-                let pool = RayonThreadPool::new(sz as u32).unwrap();
+                let keys: Vec<String> = (0..SZ).map(|x| format!("key{:04}", x)).collect();
+                let pool = RayonThreadPool::new(SZ as u32).unwrap();
                 // wait for server
                 thread::sleep(Duration::from_secs(1));
 
                 b.iter(|| {
                     let wg = WaitGroup::new();
-                    for i in 0..sz {
+                    for i in 0..SZ {
                         let adr = addr.clone();
                         let k = keys[i].clone();
                         let v = value.clone();
@@ -77,13 +79,12 @@ fn write_rayon_sled(c: &mut Criterion) {
 }
 
 fn read_rayon_sled(c: &mut Criterion) {
-    let inputs = &[1, 2, 4, 6, 8];
+    let inputs = &NUMS;
     c.bench(
         "read",
         ParameterizedBenchmark::new(
             "rayon_sled",
             move |b, &&num| {
-                let sz: usize = 1000;
                 let addr = SocketAddr::from_str("127.0.0.1:5979").unwrap();
 
                 let dir = TempDir::new().unwrap();
@@ -94,7 +95,7 @@ fn read_rayon_sled(c: &mut Criterion) {
                 let handle = server.start().unwrap();
 
                 let value = "the-value".to_owned();
-                let keys: Vec<String> = (0..sz).map(|x| format!("key{:04}", x)).collect();
+                let keys: Vec<String> = (0..SZ).map(|x| format!("key{:04}", x)).collect();
 
                 // wait for server
                 thread::sleep(Duration::from_secs(1));
@@ -106,11 +107,11 @@ fn read_rayon_sled(c: &mut Criterion) {
                         .unwrap();
                 }
 
-                let pool = RayonThreadPool::new(sz as u32).unwrap();
+                let pool = RayonThreadPool::new(SZ as u32).unwrap();
 
                 b.iter(|| {
                     let wg = WaitGroup::new();
-                    for i in 0..sz {
+                    for i in 0..SZ {
                         let adr = addr.clone();
                         let k = keys[i].clone();
                         let wg = wg.clone();
@@ -143,13 +144,12 @@ fn read_rayon_sled(c: &mut Criterion) {
 }
 
 fn write_rayon_kvstore(c: &mut Criterion) {
-    let inputs = &[1, 2, 4, 6, 8];
+    let inputs = &NUMS;
     c.bench(
         "write",
         ParameterizedBenchmark::new(
             "rayon_kvstore",
             move |b, &&num| {
-                let sz: usize = 1000;
                 let addr = SocketAddr::from_str("127.0.0.1:5979").unwrap();
 
                 let dir = TempDir::new().unwrap();
@@ -160,14 +160,14 @@ fn write_rayon_kvstore(c: &mut Criterion) {
                 let handle = server.start().unwrap();
 
                 let value = "the-value".to_owned();
-                let keys: Vec<String> = (0..sz).map(|x| format!("key{:04}", x)).collect();
-                let pool = RayonThreadPool::new(sz as u32).unwrap();
+                let keys: Vec<String> = (0..SZ).map(|x| format!("key{:04}", x)).collect();
+                let pool = RayonThreadPool::new(SZ as u32).unwrap();
                 // wait for server
                 thread::sleep(Duration::from_secs(1));
 
                 b.iter(|| {
                     let wg = WaitGroup::new();
-                    for i in 0..sz {
+                    for i in 0..SZ {
                         let adr = addr.clone();
                         let k = keys[i].clone();
                         let v = value.clone();
@@ -201,13 +201,12 @@ fn write_rayon_kvstore(c: &mut Criterion) {
 }
 
 fn read_rayon_kvstore(c: &mut Criterion) {
-    let inputs = &[1, 2, 4, 6, 8];
+    let inputs = &NUMS;
     c.bench(
         "read",
         ParameterizedBenchmark::new(
             "rayon_kvstore",
             move |b, &&num| {
-                let sz: usize = 1000;
                 let addr = SocketAddr::from_str("127.0.0.1:5979").unwrap();
 
                 let dir = TempDir::new().unwrap();
@@ -218,7 +217,7 @@ fn read_rayon_kvstore(c: &mut Criterion) {
                 let handle = server.start().unwrap();
 
                 let value = "the-value".to_owned();
-                let keys: Vec<String> = (0..sz).map(|x| format!("key{:04}", x)).collect();
+                let keys: Vec<String> = (0..SZ).map(|x| format!("key{:04}", x)).collect();
 
                 // wait for server
                 thread::sleep(Duration::from_secs(1));
@@ -230,11 +229,11 @@ fn read_rayon_kvstore(c: &mut Criterion) {
                         .unwrap();
                 }
 
-                let pool = RayonThreadPool::new(sz as u32).unwrap();
+                let pool = RayonThreadPool::new(SZ as u32).unwrap();
 
                 b.iter(|| {
                     let wg = WaitGroup::new();
-                    for i in 0..sz {
+                    for i in 0..SZ {
                         let adr = addr.clone();
                         let k = keys[i].clone();
                         let wg = wg.clone();
@@ -267,13 +266,12 @@ fn read_rayon_kvstore(c: &mut Criterion) {
 }
 
 fn write_queued_kvstore(c: &mut Criterion) {
-    let inputs = &[1, 2, 4, 6, 8];
+    let inputs = &NUMS;
     c.bench(
         "write",
         ParameterizedBenchmark::new(
             "queued_kvstore",
             move |b, &&num| {
-                let sz: usize = 1000;
                 let addr = SocketAddr::from_str("127.0.0.1:5979").unwrap();
 
                 let dir = TempDir::new().unwrap();
@@ -284,14 +282,14 @@ fn write_queued_kvstore(c: &mut Criterion) {
                 let handle = server.start().unwrap();
 
                 let value = "the-value".to_owned();
-                let keys: Vec<String> = (0..sz).map(|x| format!("key{:04}", x)).collect();
-                let pool = SharedQueueThreadPool::new(sz as u32).unwrap();
+                let keys: Vec<String> = (0..SZ).map(|x| format!("key{:04}", x)).collect();
+                let pool = SharedQueueThreadPool::new(SZ as u32).unwrap();
                 // wait for server
                 thread::sleep(Duration::from_secs(1));
 
                 b.iter(|| {
                     let wg = WaitGroup::new();
-                    for i in 0..sz {
+                    for i in 0..SZ {
                         let adr = addr.clone();
                         let k = keys[i].clone();
                         let v = value.clone();
@@ -325,13 +323,12 @@ fn write_queued_kvstore(c: &mut Criterion) {
 }
 
 fn read_queued_kvstore(c: &mut Criterion) {
-    let inputs = &[1, 2, 4, 6, 8];
+    let inputs = &NUMS;
     c.bench(
         "read",
         ParameterizedBenchmark::new(
             "queued_kvstore",
             move |b, &&num| {
-                let sz: usize = 1000;
                 let addr = SocketAddr::from_str("127.0.0.1:5979").unwrap();
 
                 let dir = TempDir::new().unwrap();
@@ -342,7 +339,7 @@ fn read_queued_kvstore(c: &mut Criterion) {
                 let handle = server.start().unwrap();
 
                 let value = "the-value".to_owned();
-                let keys: Vec<String> = (0..sz).map(|x| format!("key{:04}", x)).collect();
+                let keys: Vec<String> = (0..SZ).map(|x| format!("key{:04}", x)).collect();
 
                 // wait for server
                 thread::sleep(Duration::from_secs(1));
@@ -354,11 +351,11 @@ fn read_queued_kvstore(c: &mut Criterion) {
                         .unwrap();
                 }
 
-                let pool = SharedQueueThreadPool::new(sz as u32).unwrap();
+                let pool = SharedQueueThreadPool::new(SZ as u32).unwrap();
 
                 b.iter(|| {
                     let wg = WaitGroup::new();
-                    for i in 0..sz {
+                    for i in 0..SZ {
                         let adr = addr.clone();
                         let k = keys[i].clone();
                         let wg = wg.clone();
