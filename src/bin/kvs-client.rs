@@ -1,13 +1,18 @@
+extern crate futures;
+extern crate kvs;
 extern crate slog;
 extern crate slog_async;
 extern crate slog_term;
 extern crate structopt;
-extern crate kvs;
+extern crate tokio;
 
+use futures::prelude::*;
 use slog::{o, Drain, Logger};
 use structopt::StructOpt;
 
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use kvs::KvsClient;
 
@@ -61,21 +66,45 @@ fn main() -> Result<(), i32> {
     let drain = slog_async::Async::new(drain).build().fuse();
     let log = Logger::root(drain, o!());
 
-    let mut client = KvsClient::new(opt.addr, Some(log))?;
+    let mut client = KvsClient::new(opt.addr, log)?;
+
+    let code = Arc::new(AtomicI32::new(0));
+    let err = code.clone();
 
     match opt.op {
         Operation::Set { key, val } => {
-            client.set(key, val)?;
+            tokio::run(client.set(key, val).map_err(move |x| {
+                err.store(x, Ordering::Relaxed);
+            }));
         }
         Operation::Get { key } => {
-            match client.get(key)? {
-                Some(s) => println!("{}", s),
-                None => println!("Key not found"), 
-            }
+            tokio::run(
+                client
+                    .get(key)
+                    .map(|val| match val {
+                        Some(s) => {
+                            println!("{}", s);
+                        }
+                        None => {
+                            println!("Key not found");
+                        }
+                    })
+                    .map_err(move |x| {
+                        err.store(x, Ordering::Relaxed);
+                    }),
+            );
         }
         Operation::Rmv { key } => {
-            client.rm(key)?;
+            tokio::run(client.rm(key).map_err(move |x| {
+                err.store(x, Ordering::Relaxed);
+            }));
         }
+    };
+
+    let code = code.load(Ordering::SeqCst);
+    if code == 0 {
+        Ok(())
+    } else {
+        Err(code)
     }
-    Ok(())
 }

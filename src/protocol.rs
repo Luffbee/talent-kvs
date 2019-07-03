@@ -1,10 +1,17 @@
-#![allow(dead_code)]
+extern crate bytes;
+extern crate tokio;
+
+use bytes::BytesMut;
+use tokio::codec::{Decoder, Encoder};
+
 use std::error::Error as StdError;
 use std::fmt::{self, Display, Formatter};
 use std::io::BufRead;
 use std::str;
 
-use crate::Result;
+use crate::{Error, Result};
+
+const CRLF: &[u8; 2] = b"\r\n";
 
 /// Proto
 #[derive(Debug)]
@@ -21,7 +28,120 @@ pub enum Proto {
     Null,
 }
 
-const CRLF: &[u8; 2] = b"\r\n";
+pub enum ProtoCodec {
+    Unknown,
+    Str(usize),
+    Err(usize),
+    BulkOrNull(usize),
+    Bulk(usize),
+}
+
+impl ProtoCodec {
+    pub fn new() -> Self {
+        ProtoCodec::Unknown
+    }
+
+    fn dispatch(&self, x: u8) -> Result<Self> {
+        Ok(match x {
+            b'+' => ProtoCodec::Str(0),
+            b'-' => ProtoCodec::Err(0),
+            b'$' => ProtoCodec::BulkOrNull(0),
+            x => return Err(ProtoError::InvalidPrefix(x))?,
+        })
+    }
+}
+
+impl Decoder for ProtoCodec {
+    type Item = Proto;
+    type Error = Error;
+    fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Proto>> {
+        loop {
+            if buf.is_empty() {
+                return Ok(None);
+            }
+            match self {
+                ProtoCodec::Unknown => {
+                    *self = self.dispatch(buf.split_to(1)[0])?;
+                },
+                ProtoCodec::Str(ref mut offset) => {
+                    if let Some(s) = until_crlf(offset, buf)? {
+                        *self = ProtoCodec::Unknown;
+                        return Ok(Some(Proto::Str(s)));
+                    } else {
+                        return Ok(None);
+                    }
+                },
+                ProtoCodec::Err(ref mut offset) => {
+                    if let Some(s) = until_crlf(offset, buf)? {
+                        *self = ProtoCodec::Unknown;
+                        return Ok(Some(Proto::Err(s)));
+                    } else {
+                        return Ok(None);
+                    }
+                },
+                ProtoCodec::BulkOrNull(ref mut offset) => {
+                    if let Some(s) = until_crlf(offset, buf)? {
+                        let len: isize = s.parse()?;
+                        if len <= -1 {
+                            *self = ProtoCodec::Unknown;
+                            return Ok(Some(Proto::Null));
+                        }
+                        *self = ProtoCodec::Bulk(len as usize);
+                    } else {
+                        return Ok(None);
+                    }
+                },
+                &mut ProtoCodec::Bulk(len) => {
+                    if let Some(v) = until_len_crlf(len, buf)? {
+                        *self = ProtoCodec::Unknown;
+                        return Ok(Some(Proto::Bulk(v)));
+                    } else {
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Encoder for ProtoCodec {
+    type Item = Proto;
+    type Error = Error;
+    fn encode(&mut self, item: Proto, dst: &mut BytesMut) -> Result<()> {
+        dst.extend_from_slice(&item.ser());
+        Ok(())
+    }
+}
+
+fn until_crlf(offset: &mut usize, buf: &mut BytesMut) -> Result<Option<String>> {
+    if let Some(idx) = buf[*offset..].iter().position(|b| *b == b'\n') {
+        let s = buf.split_to(idx+1);
+        *offset = 0;
+        if s.len() < 2 || s[idx-1] != b'\r' {
+            return Err(ProtoError::UnexpectedLF)?;
+        }
+        let s = str::from_utf8(&s[..idx-1])?;
+        Ok(Some(s.to_string()))
+    } else {
+        *offset = buf.len();
+        Ok(None)
+    }
+}
+
+fn until_len_crlf(len: usize, buf: &mut BytesMut) -> Result<Option<Vec<u8>>> {
+    if buf.len() < len + 2 {
+        Ok(None)
+    } else {
+        let mut v = Vec::from(&buf.split_to(len+2)[..]);
+        if v[len..len+2] != CRLF[..] {
+            Err(ProtoError::InvalidBulk(v))?
+        } else {
+            v.truncate(len);
+            v.shrink_to_fit();
+            Ok(Some(v))
+        }
+    }
+}
 
 impl Proto {
     /// Str and Err should not contain CR or LF.
@@ -98,15 +218,16 @@ impl Proto {
 pub enum ProtoError {
     /// Invalid prefix
     InvalidPrefix(u8),
-    /// Bad request
-    BadRequest(String),
+    UnexpectedLF,
+    InvalidBulk(Vec<u8>),
 }
 
 impl Display for ProtoError {
     fn fmt(&self, f: &mut Formatter) -> std::result::Result<(), fmt::Error> {
         match self {
             ProtoError::InvalidPrefix(x) => write!(f, "invalid prefix: {:x?}", x),
-            ProtoError::BadRequest(s) => write!(f, "bad request: {}", s),
+            ProtoError::UnexpectedLF => write!(f, "unexpected '\\n'"),
+            ProtoError::InvalidBulk(u) => write!(f, "invalid bulk: {:?}", u),
         }
     }
 }

@@ -368,15 +368,13 @@ impl Clone for KvStore {
 
 impl Drop for KvStore {
     fn drop(&mut self) {
-        if self.counter.fetch_sub(1, Ordering::SeqCst) <= 1 {
-            if self.compacter.is_none() {
-                if let Err(e) = self.sx.send(Action::Shutdown) {
-                    crit!(self.log, "failed to shutdown compacter: {}", e);
-                }
-                if let Ok(handle) = Arc::try_unwrap(self.compacter.take().unwrap()) {
-                    if let Err(e) = handle.join() {
-                        crit!(self.log, "compacter panicked: {:?}", e);
-                    }
+        if self.counter.fetch_sub(1, Ordering::SeqCst) <= 1 && self.compacter.is_none() {
+            if let Err(e) = self.sx.send(Action::Shutdown) {
+                crit!(self.log, "failed to shutdown compacter: {}", e);
+            }
+            if let Ok(handle) = Arc::try_unwrap(self.compacter.take().unwrap()) {
+                if let Err(e) = handle.join() {
+                    crit!(self.log, "compacter panicked: {:?}", e);
                 }
             }
         }

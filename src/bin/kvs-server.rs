@@ -88,7 +88,7 @@ fn main() -> Result<(), i32> {
         Engine::sled => match SledDb::open(DB_DIR) {
             Ok(st) => KvsServer::new(st, pool, opt.addr, log.clone()).run()?,
             Err(e) => {
-                crit!(log, "failed to start KvStore in {}: {}", DB_DIR, e);
+                crit!(log, "failed to start SledDB in {}: {}", DB_DIR, e);
                 return Err(1);
             }
         },

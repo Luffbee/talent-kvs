@@ -13,7 +13,7 @@ use std::thread::{spawn, JoinHandle};
 //use std::thread;
 //use std::time::Duration;
 
-use crate::protocol::{Proto, ProtoError};
+use crate::protocol::Proto;
 use crate::slog::{crit, error, info, o, Drain, Logger};
 use crate::thread_pool::ThreadPool;
 use crate::{Error, KvsEngine, KvsError};
@@ -117,9 +117,9 @@ fn handle_client<EG: KvsEngine>(store: EG, mut stream: TcpStream, log: Logger) {
     };
     let mut rdr = BufReader::new(&mut stream);
     if let Err(e) = try_handle_client(store, &mut rdr, &mut wtr, log.clone()) {
-        let err = ProtoError::BadRequest(e.to_string());
+        let err = format!("bad request: {}", e);
         error!(log, "{}", err);
-        if let Err(e) = wtr.write_all(&Proto::Err(err.to_string()).ser()) {
+        if let Err(e) = wtr.write_all(&Proto::Err(err).ser()) {
             error!(log, "failed to write stream: {}", e);
         }
     }

@@ -1,119 +1,135 @@
+extern crate bytes;
 extern crate slog;
 extern crate slog_stdlog;
+extern crate tokio;
 
-use slog::{o, crit, error, Drain, Logger};
+use slog::{crit, error, o, Drain, Logger};
+use tokio::codec::Framed;
+use tokio::net::TcpStream;
+use tokio::prelude::*;
 
-use std::io::{prelude::*, BufReader};
-use std::net::{SocketAddr, TcpStream};
+use std::net::SocketAddr;
+use std::str;
 
-use crate::protocol::Proto;
+use crate::protocol::{Proto, ProtoCodec};
 
 pub struct KvsClient {
-    stream: TcpStream,
+    addr: SocketAddr,
     log: Logger,
 }
 
 impl KvsClient {
-    pub fn new(addr: SocketAddr, log: Option<Logger>) -> Result<Self, i32> {
+    pub fn new<LG>(addr: SocketAddr, log: LG) -> Result<Self, i32>
+    where
+        LG: Into<Option<Logger>>,
+    {
         let log = log
+            .into()
             .unwrap_or_else(|| Logger::root(slog_stdlog::StdLog.fuse(), o!()));
-        let stream = match TcpStream::connect(addr) {
-            Ok(s) => s,
-            Err(e) => {
-                crit!(log, "Failed to connect to {}: {}.", addr, e);
-                return Err(666);
-            }
-        };
-        Ok(Self { stream, log })
+        Ok(Self { addr, log })
     }
 
-    pub fn set(&mut self, key: String, val: String) -> Result<(), i32> {
+    fn request(&self, req: Proto) -> impl Future<Item = Proto, Error = i32> {
+        let addr = self.addr;
+        let log0 = self.log.clone();
+        let log1 = self.log.clone();
+        let log2 = self.log.clone();
+        TcpStream::connect(&self.addr)
+            .map_err(move |e| {
+                crit!(log0, "failed to connect {}: {}", addr, e);
+                666
+            })
+            .and_then(|sock| {
+                Framed::new(sock, ProtoCodec::new())
+                    .send(req)
+                    .map_err(move |e| {
+                        crit!(log1, "failed to send command: {}", e);
+                        2
+                    })
+            })
+            .and_then(move |frame| {
+                let log = log2.clone();
+                frame
+                    .into_future()
+                    .map_err(move |(e, _)| {
+                        crit!(log2, "failed to decode reply: {:?}", e);
+                        999
+                    })
+                    .and_then(move |(resp, _)| {
+                        resp.ok_or_else(|| {
+                            crit!(log, "no reply from server");
+                            998
+                        })
+                    })
+            })
+    }
+
+    pub fn set(&self, key: String, val: String) -> impl Future<Item = (), Error = i32> {
         let req = Proto::Seq(vec![
             Proto::Str("SET".to_owned()),
             Proto::Bulk(Vec::from(key)),
             Proto::Bulk(Vec::from(val)),
         ]);
-        if let Err(e) = self.stream.write(&req.ser()) {
-            crit!(self.log, "Failed to send command: {}.", e);
-            return Err(2);
-        }
-        let mut rdr = BufReader::new(&mut self.stream);
-        let resp = match Proto::from_bufread(&mut rdr) {
-            Ok(reply) => reply,
-            Err(e) => {
-                eprintln!("{:?}", e);
-                return Err(999);
-            }
-        };
-        match resp {
-            Proto::Str(_) => {}
+        let log = self.log.clone();
+        self.request(req).and_then(move |rep| match rep {
+            Proto::Str(_) => Ok(()),
             Proto::Err(e) => {
-                error!(self.log, "server error: {}", e);
-                return Err(3);
+                error!(log, "server error: {}", e);
+                Err(3)
             }
             item => {
-                error!(self.log, "unexpected item: {:?}", item);
-                return Err(4);
+                crit!(log, "unexpected item: {:?}", item);
+                Err(4)
             }
-        }
-        Ok(())
+        })
     }
 
-    pub fn get(&mut self, key: String) -> Result<Option<String>, i32> {
+    pub fn get(&self, key: String) -> impl Future<Item = Option<String>, Error = i32> {
         let req = Proto::Seq(vec![
             Proto::Str("GET".to_owned()),
             Proto::Bulk(Vec::from(key)),
         ]);
-        if let Err(e) = self.stream.write(&req.ser()) {
-            crit!(self.log, "Failed to send command: {}.", e);
-            return Err(5);
-        }
-        let mut rdr = BufReader::new(&mut self.stream);
-        let resp = Proto::from_bufread(&mut rdr).unwrap();
-        match resp {
-            Proto::Bulk(v) => {
-                Ok(Some(String::from_utf8_lossy(&v).into_owned()))
-            }
-            Proto::Null => {
-                Ok(None)
-            }
+        let log = self.log.clone();
+        self.request(req).and_then(move |rep| match rep {
+            Proto::Bulk(v) => match str::from_utf8(&v) {
+                Ok(s) => Ok(Some(s.to_string())),
+                Err(e) => {
+                    crit!(log, "bad bulk: {}", e);
+                    Err(5)
+                }
+            },
+            Proto::Null => Ok(None),
             Proto::Err(e) => {
-                error!(self.log, "server error: {}", e);
+                error!(log, "server error: {}", e);
                 Err(6)
             }
             item => {
-                error!(self.log, "unexpected item: {:?}", item);
+                crit!(log, "unexpected item: {:?}", item);
                 Err(7)
             }
-        }
+        })
     }
 
-    pub fn rm(&mut self, key: String) -> Result<(), i32> {
+    pub fn rm(&mut self, key: String) -> impl Future<Item = (), Error = i32> {
         let req = Proto::Seq(vec![
             Proto::Str("RM".to_owned()),
             Proto::Bulk(Vec::from(key)),
         ]);
-        if let Err(e) = self.stream.write(&req.ser()) {
-            crit!(self.log, "Failed to send command: {}.", e);
-            return Err(1);
-        }
-        let mut rdr = BufReader::new(&mut self.stream);
-        let resp = Proto::from_bufread(&mut rdr).unwrap();
-        match resp {
-            Proto::Str(_) => {}
+        let log = self.log.clone();
+        self.request(req).and_then(move |rep| match rep {
+            Proto::Str(_) => Ok(()),
             Proto::Null => {
-                error!(self.log, "Key not found");
-                return Err(1);
+                error!(log, "Key not found");
+                Err(8)
             }
             Proto::Err(e) => {
-                error!(self.log, "server error: {}", e);
-                return Err(1);
+                error!(log, "server error: {}", e);
+                Err(9)
             }
             item => {
-                error!(self.log, "unexpected item: {:?}", item);
-                return Err(1);
+                crit!(log, "unexpected item: {:?}", item);
+                Err(10)
             }
-        }
-        Ok(())
+        })
     }
 }
