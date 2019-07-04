@@ -17,8 +17,8 @@ use std::thread::{self, JoinHandle};
 
 use super::command::Command;
 use super::file::{self, Fdr, Fdw, Fid, Location};
-use crate::{KvsError as Error, Result};
 use crate::get_logger;
+use crate::{KvsError as Error, Result};
 
 const ACTIVE_THRESHOLD: u64 = 1024 * 1024;
 const COMPACT_THRESHOLD: usize = 2 * 1024 * 1024;

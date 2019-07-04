@@ -33,7 +33,7 @@ impl Display for Error {
                 "unexpect command: expect {:?}, but found {:?}",
                 expect, found
             ),
-            Error::KeyNotFound(key) => write!(f, "key not found: {}", key),
+            Error::KeyNotFound(key) => write!(f, "Key not found: {}", key),
             Error::UnknowErr(s) => write!(f, "unknown error: {}", s),
         }
     }

@@ -1,8 +1,8 @@
 extern crate failure;
+extern crate kvs;
 extern crate slog_async;
 extern crate slog_term;
 extern crate structopt;
-extern crate kvs;
 
 use structopt::clap::arg_enum;
 use structopt::StructOpt;
@@ -11,8 +11,8 @@ use std::net::SocketAddr;
 use std::string::String;
 
 use kvs::slog::{crit, o, Drain, Logger};
-use kvs::{KvsServer, KvStore, SledDb};
 use kvs::thread_pool::*;
+use kvs::{KvStore, KvsServer, SledDb};
 
 const DB_DIR: &str = "./";
 
@@ -57,7 +57,10 @@ fn main() -> Result<(), i32> {
 
     let decorator = slog_term::TermDecorator::new().build();
     let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-    let drain = slog_async::Async::new(drain).chan_size(10240).build().fuse();
+    let drain = slog_async::Async::new(drain)
+        .chan_size(10240)
+        .build()
+        .fuse();
     let log = Logger::root(
         drain,
         o!(

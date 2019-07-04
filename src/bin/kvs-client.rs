@@ -1,4 +1,3 @@
-extern crate futures;
 extern crate kvs;
 extern crate slog;
 extern crate slog_async;
@@ -6,13 +5,11 @@ extern crate slog_term;
 extern crate structopt;
 extern crate tokio;
 
-use futures::prelude::*;
 use slog::{o, Drain, Logger};
 use structopt::StructOpt;
+use tokio::prelude::*;
 
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, Ordering};
 
 use kvs::KvsClient;
 
@@ -68,43 +65,17 @@ fn main() -> Result<(), i32> {
 
     let mut client = KvsClient::new(opt.addr, log)?;
 
-    let code = Arc::new(AtomicI32::new(0));
-    let err = code.clone();
-
-    match opt.op {
-        Operation::Set { key, val } => {
-            tokio::run(client.set(key, val).map_err(move |x| {
-                err.store(x, Ordering::Relaxed);
-            }));
-        }
-        Operation::Get { key } => {
-            tokio::run(
-                client
-                    .get(key)
-                    .map(|val| match val {
-                        Some(s) => {
-                            println!("{}", s);
-                        }
-                        None => {
-                            println!("Key not found");
-                        }
-                    })
-                    .map_err(move |x| {
-                        err.store(x, Ordering::Relaxed);
-                    }),
-            );
-        }
-        Operation::Rmv { key } => {
-            tokio::run(client.rm(key).map_err(move |x| {
-                err.store(x, Ordering::Relaxed);
-            }));
-        }
+    let res: Box<dyn Future<Item = (), Error = i32>> = match opt.op {
+        Operation::Set { key, val } => Box::new(client.set(key, val)),
+        Operation::Get { key } => Box::new(client.get(key).map(|val| match val {
+            Some(s) => {
+                println!("{}", s);
+            }
+            None => {
+                println!("Key not found");
+            }
+        })),
+        Operation::Rmv { key } => Box::new(client.rm(key)),
     };
-
-    let code = code.load(Ordering::SeqCst);
-    if code == 0 {
-        Ok(())
-    } else {
-        Err(code)
-    }
+    res.wait()
 }

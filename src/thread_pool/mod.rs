@@ -25,7 +25,9 @@ pub struct RayonThreadPool(Arc<RayonTP>);
 
 impl ThreadPool for RayonThreadPool {
     fn new(n: u32) -> Result<Self> {
-        Ok(RayonThreadPool(Arc::new(ThreadPoolBuilder::new().num_threads(n as usize).build()?)))
+        Ok(RayonThreadPool(Arc::new(
+            ThreadPoolBuilder::new().num_threads(n as usize).build()?,
+        )))
     }
 
     fn spawn<F>(&self, job: F)

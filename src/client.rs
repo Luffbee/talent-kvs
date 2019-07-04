@@ -9,8 +9,8 @@ use tokio::prelude::*;
 use std::net::SocketAddr;
 use std::str;
 
-use crate::protocol::{Proto, ProtoCodec};
 use crate::get_logger;
+use crate::protocol::{Proto, ProtoCodec};
 
 pub struct KvsClient {
     addr: SocketAddr,
@@ -49,12 +49,12 @@ impl KvsClient {
                 frame
                     .into_future()
                     .map_err(move |(e, _)| {
-                        crit!(log2, "failed to decode reply: {:?}", e);
+                        crit!(log2, "failed to decode reply: {}", e);
                         999
                     })
                     .and_then(move |(resp, _)| {
                         resp.ok_or_else(|| {
-                            crit!(log, "no reply from server");
+                            crit!(log, "empty reply");
                             998
                         })
                     })
@@ -115,10 +115,6 @@ impl KvsClient {
         let log = self.log.clone();
         self.request(req).and_then(move |rep| match rep {
             Proto::Str(_) => Ok(()),
-            Proto::Null => {
-                error!(log, "Key not found");
-                Err(8)
-            }
             Proto::Err(e) => {
                 error!(log, "server error: {}", e);
                 Err(9)

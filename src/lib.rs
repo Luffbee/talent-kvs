@@ -3,11 +3,11 @@
 
 #[macro_use]
 pub extern crate slog;
-extern crate slog_stdlog;
 extern crate failure;
+extern crate slog_stdlog;
 
 pub use failure::Error;
-use slog::{Logger, Drain};
+use slog::{Drain, Logger};
 
 mod client;
 mod engine;
@@ -24,5 +24,6 @@ pub use engine::{KvStore, KvsEngine};
 pub use server::KvsServer;
 
 fn get_logger(opt: &mut Option<Logger>) -> Logger {
-    opt.take().unwrap_or_else(|| Logger::root(slog_stdlog::StdLog.fuse(), o!()))
+    opt.take()
+        .unwrap_or_else(|| Logger::root(slog_stdlog::StdLog.fuse(), o!()))
 }

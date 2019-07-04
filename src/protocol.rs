@@ -6,7 +6,6 @@ use tokio::codec::{Decoder, Encoder};
 
 use std::error::Error as StdError;
 use std::fmt::{self, Display, Formatter};
-use std::io::BufRead;
 use std::str;
 
 use crate::{Error, Result};
@@ -62,7 +61,7 @@ impl Decoder for ProtoCodec {
             match self {
                 ProtoCodec::Unknown => {
                     *self = self.dispatch(buf.split_to(1)[0])?;
-                },
+                }
                 ProtoCodec::Str(ref mut offset) => {
                     if let Some(s) = until_crlf(offset, buf)? {
                         *self = ProtoCodec::Unknown;
@@ -70,7 +69,7 @@ impl Decoder for ProtoCodec {
                     } else {
                         return Ok(None);
                     }
-                },
+                }
                 ProtoCodec::Err(ref mut offset) => {
                     if let Some(s) = until_crlf(offset, buf)? {
                         *self = ProtoCodec::Unknown;
@@ -78,7 +77,7 @@ impl Decoder for ProtoCodec {
                     } else {
                         return Ok(None);
                     }
-                },
+                }
                 ProtoCodec::BulkOrNull(ref mut offset) => {
                     if let Some(s) = until_crlf(offset, buf)? {
                         let len: isize = s.parse()?;
@@ -90,7 +89,7 @@ impl Decoder for ProtoCodec {
                     } else {
                         return Ok(None);
                     }
-                },
+                }
                 &mut ProtoCodec::Bulk(len) => {
                     if let Some(v) = until_len_crlf(len, buf)? {
                         *self = ProtoCodec::Unknown;
@@ -115,12 +114,12 @@ impl Encoder for ProtoCodec {
 
 fn until_crlf(offset: &mut usize, buf: &mut BytesMut) -> Result<Option<String>> {
     if let Some(idx) = buf[*offset..].iter().position(|b| *b == b'\n') {
-        let s = buf.split_to(idx+1);
+        let s = buf.split_to(idx + 1);
         *offset = 0;
-        if s.len() < 2 || s[idx-1] != b'\r' {
+        if s.len() < 2 || s[idx - 1] != b'\r' {
             return Err(ProtoError::UnexpectedLF)?;
         }
-        let s = str::from_utf8(&s[..idx-1])?;
+        let s = str::from_utf8(&s[..idx - 1])?;
         Ok(Some(s.to_string()))
     } else {
         *offset = buf.len();
@@ -132,8 +131,8 @@ fn until_len_crlf(len: usize, buf: &mut BytesMut) -> Result<Option<Vec<u8>>> {
     if buf.len() < len + 2 {
         Ok(None)
     } else {
-        let mut v = Vec::from(&buf.split_to(len+2)[..]);
-        if v[len..len+2] != CRLF[..] {
+        let mut v = Vec::from(&buf.split_to(len + 2)[..]);
+        if v[len..len + 2] != CRLF[..] {
             Err(ProtoError::InvalidBulk(v))?
         } else {
             v.truncate(len);
@@ -175,41 +174,6 @@ impl Proto {
         }
         res.extend_from_slice(CRLF);
         res
-    }
-
-    /// from BufRead
-    pub fn from_bufread(rdr: &mut impl BufRead) -> Result<Proto> {
-        let mut prefix = [0; 1];
-        let mut buf: Vec<u8> = Vec::new();
-        if let Err(e) = rdr.read_exact(&mut prefix) {
-            //eprintln!("EXEXEXEXEXEXEX");
-            Err(e)?;
-        }
-        match prefix[0] {
-            b'+' => {
-                rdr.read_until(b'\n', &mut buf)?;
-                Ok(Proto::Str(str::from_utf8(&buf)?.trim().to_owned()))
-            }
-            b'-' => {
-                rdr.read_until(b'\n', &mut buf)?;
-                let s = str::from_utf8(&buf)?.trim().to_owned();
-                Ok(Proto::Err(s))
-            }
-            b'$' => {
-                rdr.read_until(b'\n', &mut buf)?;
-                let n: isize = str::from_utf8(&buf)?.trim().parse()?;
-                if n <= -1 {
-                    return Ok(Proto::Null);
-                }
-                let n = n as usize;
-                // n bytes bulk + 2 bytes CRLF
-                buf.resize(n + 2, 0);
-                rdr.read_exact(&mut buf)?;
-                buf.truncate(n);
-                Ok(Proto::Bulk(buf))
-            }
-            x => Err(ProtoError::InvalidPrefix(x))?,
-        }
     }
 }
 

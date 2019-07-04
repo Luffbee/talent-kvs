@@ -58,7 +58,9 @@ struct Panicer {
 
 impl ThreadPool for SharedQueueThreadPool {
     fn new(size: u32) -> Result<Self> {
-        Ok(SharedQueueThreadPool(Arc::new(QueuedThreadPool::with_log(size, None)?)))
+        Ok(SharedQueueThreadPool(Arc::new(QueuedThreadPool::with_log(
+            size, None,
+        )?)))
     }
 
     fn spawn<F>(&self, job: F)
@@ -182,10 +184,8 @@ impl Drop for Worker {
 
 impl Drop for Panicer {
     fn drop(&mut self) {
-        if thread::panicking() {
-            if self.monitor.send(Control::Bury(self.id)).is_err() {
-                error!(self.log, "worker {} panicked after monitor dead", self.id);
-            }
+        if thread::panicking() && self.monitor.send(Control::Bury(self.id)).is_err() {
+            error!(self.log, "worker {} panicked after monitor dead", self.id);
         }
     }
 }
