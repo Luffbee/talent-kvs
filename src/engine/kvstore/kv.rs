@@ -1,11 +1,9 @@
 extern crate chashmap;
 extern crate crossbeam_channel;
-pub extern crate slog;
-extern crate slog_stdlog;
 
 use chashmap::CHashMap;
 use crossbeam_channel::{unbounded, Sender};
-use slog::{crit, debug, error, info, o, warn, Drain, Logger};
+use slog::Logger;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -20,6 +18,7 @@ use std::thread::{self, JoinHandle};
 use super::command::Command;
 use super::file::{self, Fdr, Fdw, Fid, Location};
 use crate::{KvsError as Error, Result};
+use crate::get_logger;
 
 const ACTIVE_THRESHOLD: u64 = 1024 * 1024;
 const COMPACT_THRESHOLD: usize = 2 * 1024 * 1024;
@@ -430,10 +429,7 @@ impl KvStoreBuilder {
 
     /// Build the KvStore.
     pub fn build(mut self) -> Result<KvStore> {
-        let log = self
-            .log
-            .take()
-            .unwrap_or_else(|| Logger::root(slog_stdlog::StdLog.fuse(), o!()));
+        let log = get_logger(&mut self.log);
 
         let mut fds;
         let active;

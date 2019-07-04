@@ -10,13 +10,12 @@ use std::string::String;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{spawn, JoinHandle};
-//use std::thread;
-//use std::time::Duration;
 
 use crate::protocol::Proto;
-use crate::slog::{crit, error, info, o, Drain, Logger};
+use crate::slog::Logger;
 use crate::thread_pool::ThreadPool;
 use crate::{Error, KvsEngine, KvsError};
+use crate::get_logger;
 
 pub struct KvsServer<EG: KvsEngine, TP: ThreadPool> {
     store: EG,
@@ -43,9 +42,7 @@ impl<EG: KvsEngine, TP: ThreadPool> KvsServer<EG, TP> {
     where
         LOG: Into<Option<Logger>>,
     {
-        let log = log
-            .into()
-            .unwrap_or_else(|| Logger::root(slog_stdlog::StdLog.fuse(), o!()));
+        let log = get_logger(&mut log.into());
         Self {
             store,
             pool: Arc::new(Mutex::new(pool)),

@@ -1,9 +1,7 @@
 extern crate bytes;
-extern crate slog;
-extern crate slog_stdlog;
 extern crate tokio;
 
-use slog::{crit, error, o, Drain, Logger};
+use slog::Logger;
 use tokio::codec::Framed;
 use tokio::net::TcpStream;
 use tokio::prelude::*;
@@ -12,6 +10,7 @@ use std::net::SocketAddr;
 use std::str;
 
 use crate::protocol::{Proto, ProtoCodec};
+use crate::get_logger;
 
 pub struct KvsClient {
     addr: SocketAddr,
@@ -23,9 +22,7 @@ impl KvsClient {
     where
         LG: Into<Option<Logger>>,
     {
-        let log = log
-            .into()
-            .unwrap_or_else(|| Logger::root(slog_stdlog::StdLog.fuse(), o!()));
+        let log = get_logger(&mut log.into());
         Ok(Self { addr, log })
     }
 
