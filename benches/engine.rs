@@ -11,9 +11,9 @@ fn write100_unique(c: &mut Criterion) {
     let mut rng = thread_rng();
     let mut data = Vec::with_capacity(100);
     for _ in 0..100 {
-        let len = rng.gen_range(1, 100001);
+        let len = rng.gen_range(1, 100_001);
         let key: String = rng.sample_iter(&Alphanumeric).take(len).collect();
-        let len = rng.gen_range(1, 100001);
+        let len = rng.gen_range(1, 100_001);
         let val: String = rng.sample_iter(&Alphanumeric).take(len).collect();
         data.push((key, val));
     }
@@ -25,7 +25,7 @@ fn write100_repeat(c: &mut Criterion) {
     let mut rng = thread_rng();
     let mut keys = Vec::with_capacity(keys_sz);
     for _ in 0..keys_sz {
-        let len = rng.gen_range(1, 100001);
+        let len = rng.gen_range(1, 100_001);
         let key: String = rng.sample_iter(&Alphanumeric).take(len).collect();
         keys.push(key);
     }
@@ -33,14 +33,14 @@ fn write100_repeat(c: &mut Criterion) {
     for _ in 0..100 {
         let k = rng.gen_range(0, 20);
         let key = keys[k].clone();
-        let len = rng.gen_range(1, 100001);
+        let len = rng.gen_range(1, 100_001);
         let val: String = rng.sample_iter(&Alphanumeric).take(len).collect();
         data.push((key, val));
     }
     bench_write(c, "write100_repeat", data);
 }
 
-fn iter_write<E: KvsEngine>(eng: E, data: &Vec<(String, String)>) {
+fn iter_write<E: KvsEngine>(eng: E, data: &[(String, String)]) {
     for kv in data.iter() {
         eng.set(kv.0.clone(), kv.1.clone()).expect("failed to set");
     }
@@ -79,7 +79,7 @@ fn nonrepeat_read(c: &mut Criterion) {
     bench_read(c, "nonrepeat_read_1000_250", 1000, 250);
 }
 
-fn iter_read<E: KvsEngine>(eng: E, data: &Vec<(String, String)>, ord: &Vec<usize>) {
+fn iter_read<E: KvsEngine>(eng: E, data: &[(String, String)], ord: &[usize]) {
     for i in ord.iter() {
         let (key, val) = &data[*i];
         assert_eq!(
@@ -93,9 +93,9 @@ fn bench_read(c: &mut Criterion, name: &str, data_sz: usize, ord_sz: usize) {
     let mut rng = thread_rng();
     let mut data = Vec::with_capacity(data_sz);
     for _ in 0..data_sz {
-        let len = rng.gen_range(1, 100001);
+        let len = rng.gen_range(1, 100_001);
         let key: String = rng.sample_iter(&Alphanumeric).take(len).collect();
-        let len = rng.gen_range(1, 100001);
+        let len = rng.gen_range(1, 100_001);
         let val: String = rng.sample_iter(&Alphanumeric).take(len).collect();
         data.push((key, val));
     }
