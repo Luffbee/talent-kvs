@@ -1,10 +1,10 @@
 extern crate crossbeam_channel;
 extern crate num_cpus;
 
-use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
+use crossbeam_channel::{unbounded, Receiver, Sender};
 
-use std::thread::{self, JoinHandle};
 use std::sync::Arc;
+use std::thread::{self, JoinHandle};
 
 use super::ThreadPool;
 use crate::Result;
@@ -18,7 +18,8 @@ enum Message {
 }
 
 enum Control {
-    GoOn,
+    Test,
+    Bury(WorkerID),
     Stop,
 }
 
@@ -26,7 +27,7 @@ struct QueuedThreadPool {
     size: u32,
     worker: Sender<Message>,
     monitor: Sender<Control>,
-    monitor_handle: Option<JoinHandle<()>>
+    monitor_handle: Option<JoinHandle<()>>,
 }
 
 #[derive(Clone)]
@@ -35,9 +36,8 @@ pub struct SharedQueueThreadPool(Arc<QueuedThreadPool>);
 struct Monitor {
     size: u32,
     control: Receiver<Control>,
+    worker_ctl: Sender<Control>,
     worker_rx: Receiver<Message>,
-    prx: Receiver<WorkerID>,
-    psx: Sender<WorkerID>,
     workers: Vec<Worker>,
 }
 
@@ -53,8 +53,9 @@ impl ThreadPool for SharedQueueThreadPool {
         }
         let (worker, worker_rx) = unbounded();
         let (monitor, monitor_rx) = unbounded();
+        let worker_ctl = monitor.clone();
         let monitor_handle = Some(thread::spawn(move || {
-            let mut monitor = Monitor::new(size, monitor_rx, worker_rx);
+            let mut monitor = Monitor::new(size, monitor_rx, worker_ctl, worker_rx);
             monitor.watch();
         }));
         Ok(SharedQueueThreadPool(Arc::new(QueuedThreadPool {
@@ -70,7 +71,7 @@ impl ThreadPool for SharedQueueThreadPool {
         F: FnOnce() + Send + 'static,
     {
         // Check monitor is alive.
-        self.0.monitor.send(Control::GoOn).expect("monitor dead");
+        self.0.monitor.send(Control::Test).expect("monitor dead");
         self.0.worker.send(Message::Run(Box::new(job))).unwrap();
     }
 }
@@ -88,43 +89,46 @@ impl Drop for QueuedThreadPool {
 }
 
 impl Monitor {
-    fn new(size: u32, control: Receiver<Control>, worker_rx: Receiver<Message>) -> Monitor {
-        let (psx, prx) = unbounded();
+    fn new(size: u32,
+           control: Receiver<Control>,
+           worker_ctl: Sender<Control>,
+           worker_rx: Receiver<Message>) -> Monitor {
         let mut workers = Vec::with_capacity(size as usize);
         for i in 0..size as WorkerID {
-            let worker = Worker::new(i, worker_rx.clone(), psx.clone());
+            let worker = Worker::new(i, worker_rx.clone(), worker_ctl.clone());
             workers.push(worker);
         }
         Monitor {
             size,
             control,
+            worker_ctl,
             worker_rx,
-            prx,
-            psx,
             workers,
         }
     }
 
     fn watch(&mut self) {
-        while let Ok(id) = self.prx.recv() {
-            match self.control.try_recv() {
-                Ok(Control::GoOn) | Err(TryRecvError::Empty) => {}
-                _ => break,
+        while let Ok(ctl) = self.control.recv() {
+            match ctl {
+                Control::Test => continue,
+                Control::Stop => break,
+                Control::Bury(id) => {
+                    eprintln!("found worker {} dead", id);
+                    let id = id + self.size as WorkerID;
+                    let worker = Worker::new(id, self.worker_rx.clone(), self.worker_ctl.clone());
+                    self.workers[id % self.size as WorkerID] = worker;
+                }
             }
-            eprintln!("found worker {} panicked", id);
-            let id = id + self.size as WorkerID;
-            let worker = Worker::new(id, self.worker_rx.clone(), self.psx.clone());
-            self.workers[id % self.size as WorkerID] = worker;
         }
     }
 }
 
 impl Worker {
-    fn new(id: WorkerID, rx: Receiver<Message>, psx: Sender<WorkerID>) -> Worker {
+    fn new(id: WorkerID, rx: Receiver<Message>, monitor: Sender<Control>) -> Worker {
         let tid = id;
         let handle = Some(thread::spawn(move || {
             // use to detect panic.
-            let panicer = Panicer { id: tid, psx };
+            let panicer = Panicer { id: tid, monitor };
             while let Ok(Message::Run(job)) = rx.recv() {
                 job();
             }
@@ -136,23 +140,23 @@ impl Worker {
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        eprintln!("dropping worker {}", self.id);
         if let Err(e) = self.handle.take().unwrap().join() {
             eprintln!("thread {} panicked: {:?}", self.id, e);
         }
-        eprintln!("dropped worker {}", self.id);
     }
 }
 
 struct Panicer {
     id: WorkerID,
-    psx: Sender<WorkerID>,
+    monitor: Sender<Control>,
 }
 
 impl Drop for Panicer {
     fn drop(&mut self) {
         if thread::panicking() {
-            self.psx.send(self.id).unwrap();
+            if self.monitor.send(Control::Bury(self.id)).is_err() {
+                eprintln!("worker {} panicked after monitor dead", self.id);
+            }
         }
     }
 }
