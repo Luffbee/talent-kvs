@@ -65,7 +65,7 @@ impl<EG: KvsEngine, TP: ThreadPool> KvsServer<EG, TP> {
     }
 
     pub fn start(&self) -> Box<dyn Future<Item = (), Error = i32> + Send + 'static> {
-        let log1 = self.log.clone();
+        let log = self.log.clone();
         let stop = self.stop.clone();
         let this = self.clone();
         let listener = match TcpListener::bind(&self.addr) {
@@ -82,7 +82,7 @@ impl<EG: KvsEngine, TP: ThreadPool> KvsServer<EG, TP> {
                 .then(move |res| match res {
                     Ok(sock) => Ok(Some(sock)),
                     Err(e) => {
-                        error!(log1, "bad stream: {}", e);
+                        error!(log, "bad stream: {}", e);
                         Ok(None)
                     }
                 })

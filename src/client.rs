@@ -28,36 +28,33 @@ impl KvsClient {
 
     fn request(&self, req: Proto) -> impl Future<Item = Proto, Error = i32> {
         let addr = self.addr;
-        let log0 = self.log.clone();
-        let log1 = self.log.clone();
-        let log2 = self.log.clone();
+        let log = self.log.clone();
         TcpStream::connect(&self.addr)
             .map_err(move |e| {
-                crit!(log0, "failed to connect {}: {}", addr, e);
-                666
+                (format!("failed to connect {}: {}", addr, e), 666)
             })
             .and_then(|sock| {
                 Framed::new(sock, ProtoCodec::new())
                     .send(req)
                     .map_err(move |e| {
-                        crit!(log1, "failed to send command: {}", e);
-                        2
+                        (format!("failed to send command: {}", e), 2)
                     })
             })
             .and_then(move |frame| {
-                let log = log2.clone();
                 frame
                     .into_future()
                     .map_err(move |(e, _)| {
-                        crit!(log2, "failed to decode reply: {}", e);
-                        999
+                        (format!("failed to decode reply: {}", e), 999)
                     })
                     .and_then(move |(resp, _)| {
                         resp.ok_or_else(|| {
-                            crit!(log, "empty reply");
-                            998
+                            (format!("empty reply"), 998)
                         })
                     })
+            })
+            .map_err(move |(e, code)| {
+                crit!(log, "{}", e);
+                code
             })
     }
 
