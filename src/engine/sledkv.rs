@@ -31,6 +31,9 @@ impl SledDb {
 }
 
 impl KvsEngine for SledDb {
+    fn open(path: impl AsRef<Path>) -> Result<Self> {
+        Self::open(path)
+    }
     /// Set key-value.
     fn set(&self, key: String, value: String) -> Result<()> {
         Tree::set(&self.0, key.as_bytes(), value.as_bytes())?;

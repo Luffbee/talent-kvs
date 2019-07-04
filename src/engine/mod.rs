@@ -1,5 +1,7 @@
 extern crate failure;
 
+use std::path::Path;
+
 pub mod kvstore;
 pub mod sledkv;
 
@@ -8,6 +10,7 @@ pub use kvstore::KvStore;
 
 /// KV server storage backend.
 pub trait KvsEngine: Clone + Send + 'static {
+    fn open(path: impl AsRef<Path>) -> Result<Self>;
     /// Set key-value.
     fn set(&self, key: String, value: String) -> Result<()>;
     /// Get key.
@@ -17,6 +20,9 @@ pub trait KvsEngine: Clone + Send + 'static {
 }
 
 impl KvsEngine for KvStore {
+    fn open(path: impl AsRef<Path>) -> Result<Self> {
+        KvStore::open(path)
+    }
     fn set(&self, key: String, value: String) -> Result<()> {
         self.set(key, value)
     }
