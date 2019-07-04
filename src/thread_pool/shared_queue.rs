@@ -1,13 +1,14 @@
 extern crate crossbeam_channel;
 extern crate num_cpus;
 
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{unbounded, Receiver as RX, Sender as TX};
+use slog::Logger;
 
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use super::ThreadPool;
-use crate::Result;
+use crate::{get_logger, Result};
 
 type Task = Box<dyn FnOnce() + Send + 'static>;
 type WorkerID = usize;
@@ -24,9 +25,10 @@ enum Control {
 }
 
 struct QueuedThreadPool {
+    log: Logger,
     size: u32,
-    worker: Sender<Message>,
-    monitor: Sender<Control>,
+    worker: TX<Message>,
+    monitor: TX<Control>,
     monitor_handle: Option<JoinHandle<()>>,
 }
 
@@ -34,36 +36,29 @@ struct QueuedThreadPool {
 pub struct SharedQueueThreadPool(Arc<QueuedThreadPool>);
 
 struct Monitor {
+    log: Logger,
     size: u32,
-    control: Receiver<Control>,
-    worker_ctl: Sender<Control>,
-    worker_rx: Receiver<Message>,
+    control: RX<Control>,
+    worker_ctl: TX<Control>,
+    worker_rx: RX<Message>,
     workers: Vec<Worker>,
 }
 
 struct Worker {
+    log: Logger,
     id: WorkerID,
     handle: Option<JoinHandle<()>>,
 }
 
+struct Panicer {
+    log: Logger,
+    id: WorkerID,
+    monitor: TX<Control>,
+}
+
 impl ThreadPool for SharedQueueThreadPool {
-    fn new(mut size: u32) -> Result<Self> {
-        if size == 0 {
-            size = num_cpus::get() as u32;
-        }
-        let (worker, worker_rx) = unbounded();
-        let (monitor, monitor_rx) = unbounded();
-        let worker_ctl = monitor.clone();
-        let monitor_handle = Some(thread::spawn(move || {
-            let mut monitor = Monitor::new(size, monitor_rx, worker_ctl, worker_rx);
-            monitor.watch();
-        }));
-        Ok(SharedQueueThreadPool(Arc::new(QueuedThreadPool {
-            size,
-            worker,
-            monitor,
-            monitor_handle,
-        })))
+    fn new(size: u32) -> Result<Self> {
+        Ok(SharedQueueThreadPool(Arc::new(QueuedThreadPool::with_log(size, None)?)))
     }
 
     fn spawn<F>(&self, job: F)
@@ -76,6 +71,33 @@ impl ThreadPool for SharedQueueThreadPool {
     }
 }
 
+impl QueuedThreadPool {
+    pub fn with_log<LG>(mut size: u32, log: LG) -> Result<Self>
+    where
+        LG: Into<Option<Logger>>,
+    {
+        if size == 0 {
+            size = num_cpus::get() as u32;
+        }
+        let (worker, worker_rx) = unbounded();
+        let (monitor, monitor_rx) = unbounded();
+        let worker_ctl = monitor.clone();
+        let log = get_logger(&mut log.into());
+        let m_log = log.new(o!("role" => "monitor"));
+        let monitor_handle = Some(thread::spawn(move || {
+            let mut monitor = Monitor::new(m_log, size, monitor_rx, worker_ctl, worker_rx);
+            monitor.watch();
+        }));
+        Ok(QueuedThreadPool {
+            size,
+            worker,
+            monitor,
+            monitor_handle,
+            log,
+        })
+    }
+}
+
 impl Drop for QueuedThreadPool {
     fn drop(&mut self) {
         self.monitor.send(Control::Stop).unwrap();
@@ -83,22 +105,27 @@ impl Drop for QueuedThreadPool {
             self.worker.send(Message::Shutdown).unwrap();
         }
         if let Err(e) = self.monitor_handle.take().unwrap().join() {
-            eprintln!("monitor panicked: {:?}", e);
+            error!(self.log, "monitor panicked: {:?}", e);
         }
     }
 }
 
 impl Monitor {
-    fn new(size: u32,
-           control: Receiver<Control>,
-           worker_ctl: Sender<Control>,
-           worker_rx: Receiver<Message>) -> Monitor {
+    fn new(
+        log: Logger,
+        size: u32,
+        control: RX<Control>,
+        worker_ctl: TX<Control>,
+        worker_rx: RX<Message>,
+    ) -> Monitor {
         let mut workers = Vec::with_capacity(size as usize);
         for i in 0..size as WorkerID {
-            let worker = Worker::new(i, worker_rx.clone(), worker_ctl.clone());
+            let w_log = log.new(o!("role" => format!("worker {}", i)));
+            let worker = Worker::new(w_log, i, worker_rx.clone(), worker_ctl.clone());
             workers.push(worker);
         }
         Monitor {
+            log,
             size,
             control,
             worker_ctl,
@@ -113,9 +140,11 @@ impl Monitor {
                 Control::Test => continue,
                 Control::Stop => break,
                 Control::Bury(id) => {
-                    eprintln!("found worker {} dead", id);
+                    error!(self.log, "found worker {} dead", id);
                     let id = id + self.size as WorkerID;
-                    let worker = Worker::new(id, self.worker_rx.clone(), self.worker_ctl.clone());
+                    let w_log = self.log.new(o!("role" => format!("worker {}", id)));
+                    let worker =
+                        Worker::new(w_log, id, self.worker_rx.clone(), self.worker_ctl.clone());
                     self.workers[id % self.size as WorkerID] = worker;
                 }
             }
@@ -124,38 +153,38 @@ impl Monitor {
 }
 
 impl Worker {
-    fn new(id: WorkerID, rx: Receiver<Message>, monitor: Sender<Control>) -> Worker {
+    fn new(log: Logger, id: WorkerID, rx: RX<Message>, monitor: TX<Control>) -> Worker {
         let tid = id;
+        let p_log = log.clone();
         let handle = Some(thread::spawn(move || {
             // use to detect panic.
-            let panicer = Panicer { id: tid, monitor };
+            let panicer = Panicer {
+                log: p_log,
+                id: tid,
+                monitor,
+            };
             while let Ok(Message::Run(job)) = rx.recv() {
                 job();
             }
             drop(panicer);
         }));
-        Worker { id, handle }
+        Worker { log, id, handle }
     }
 }
 
 impl Drop for Worker {
     fn drop(&mut self) {
         if let Err(e) = self.handle.take().unwrap().join() {
-            eprintln!("thread {} panicked: {:?}", self.id, e);
+            error!(self.log, "thread {} panicked: {:?}", self.id, e);
         }
     }
-}
-
-struct Panicer {
-    id: WorkerID,
-    monitor: Sender<Control>,
 }
 
 impl Drop for Panicer {
     fn drop(&mut self) {
         if thread::panicking() {
             if self.monitor.send(Control::Bury(self.id)).is_err() {
-                eprintln!("worker {} panicked after monitor dead", self.id);
+                error!(self.log, "worker {} panicked after monitor dead", self.id);
             }
         }
     }

@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 mod naive;
 mod shared_queue;
-pub mod panic_control;
 
 use crate::Result;
 pub use naive::NaiveThreadPool;
