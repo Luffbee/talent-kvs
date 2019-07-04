@@ -57,14 +57,21 @@ impl<EG: KvsEngine, TP: ThreadPool> KvsServer<EG, TP> {
     }
 
     pub fn run(&self) -> Result<(), i32> {
-        let server = self.start();
+        let server = self.get_future();
         let mut rt = Runtime::new().unwrap();
         let res = rt.block_on(server);
         rt.shutdown_on_idle().wait().unwrap();
         res
     }
 
-    pub fn start(&self) -> Box<dyn Future<Item = (), Error = i32> + Send + 'static> {
+    pub fn start(&self) -> Runtime {
+        let server = self.get_future();
+        let mut rt = Runtime::new().unwrap();
+        rt.spawn(server.map_err(|_| ()));
+        rt
+    }
+
+    pub fn get_future(&self) -> Box<dyn Future<Item = (), Error = i32> + Send + 'static> {
         let log = self.log.clone();
         let stop = self.stop.clone();
         let this = self.clone();

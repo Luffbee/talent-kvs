@@ -30,27 +30,17 @@ impl KvsClient {
         let addr = self.addr;
         let log = self.log.clone();
         TcpStream::connect(&self.addr)
-            .map_err(move |e| {
-                (format!("failed to connect {}: {}", addr, e), 666)
-            })
+            .map_err(move |e| (format!("failed to connect {}: {}", addr, e), 666))
             .and_then(|sock| {
                 Framed::new(sock, ProtoCodec::new())
                     .send(req)
-                    .map_err(move |e| {
-                        (format!("failed to send command: {}", e), 2)
-                    })
+                    .map_err(move |e| (format!("failed to send command: {}", e), 2))
             })
             .and_then(move |frame| {
                 frame
                     .into_future()
-                    .map_err(move |(e, _)| {
-                        (format!("failed to decode reply: {}", e), 999)
-                    })
-                    .and_then(move |(resp, _)| {
-                        resp.ok_or_else(|| {
-                            (format!("empty reply"), 998)
-                        })
-                    })
+                    .map_err(move |(e, _)| (format!("failed to decode reply: {}", e), 999))
+                    .and_then(move |(resp, _)| resp.ok_or_else(|| ("empty reply".to_string(), 998)))
             })
             .map_err(move |(e, code)| {
                 crit!(log, "{}", e);
